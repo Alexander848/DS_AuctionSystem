@@ -1,3 +1,38 @@
+### Server Task Table
+
+| **Server Task**          | **Description**                                                                  | **Communication Protocol**         | **Role**               |
+|--------------------------|----------------------------------------------------------------------------------|-------------------------------------|------------------------|
+| **UID Management**       | Generate and manage a unique identifier for the server                          | N/A                                 | All Server Nodes       |
+| **Leader Election**      | Implement LCR algorithm for electing Idle Node Manager and Auctioneers          | Reliable Total Ordering Multicast   | INM and Auctioneer Nodes |
+| **Dynamic Discovery**    | Discover and register new server nodes using UDP Broadcast                      | UDP Broadcast                       | All Server Nodes       |
+| **Join System**          | Handle new servers joining the system and update group membership               | Reliable FIFO Multicast             | INM                    |
+| **Start Auction**        | Initiate and manage a new auction assign Auctioneer and Followers               | Reliable FIFO Multicast             | INM                    |
+| **Finalize Auction**     | Close an auction notify clients and reassign Auctioneer roles if needed         | Reliable Total Ordering Multicast   | Active Auctioneer      |
+| **Heartbeat Mechanism**  | Send and receive periodic heartbeat messages to monitor node liveliness         | Reliable FIFO Multicast             | INM and Auctioneer Nodes |
+| **Handle Failures**      | Detect node failures via missed heartbeats and trigger re-election if necessary | Reliable Total Ordering Multicast   | INM and Auctioneer Nodes |
+| **Data Replication**     | Replicate auction data across follower nodes to ensure consistency and fault tolerance | Reliable FIFO Multicast         | Active Auctioneer      |
+| **Maintain Ring Topology** | Manage the ring structure for communication and leader election                | Reliable FIFO Multicast             | INM                    |
+
+---
+
+### Client Task Table
+
+| **Client Task**                   | **Description**                                         | **Communication Protocol**        |
+|-----------------------------------|---------------------------------------------------------|------------------------------------|
+| **UID Management**                | Generate and manage a unique identifier for the client  | N/A                                |
+| **Command Line Interface CLI**    | Provide user interaction through CLI commands like list start join bid leave | N/A                                |
+| **Request Available Items**       | Request a list of available auction items from INM      | Reliable FIFO Multicast             |
+| **Start Auction**                 | Initiate a new auction for a specific item              | Reliable FIFO Multicast             |
+| **Join Auction**                  | Join an existing auction managed by an Auctioneer       | Reliable FIFO Multicast             |
+| **Leave Auction**                 | Leave an ongoing auction gracefully                     | Reliable Total Ordering Multicast   |
+| **Place Bid**                     | Submit a bid to the active Auctioneer                   | Reliable Total Ordering Multicast   |
+| **Handle Server Failures**        | Re discover and connect to a new Auctioneer if current one fails | Reliable FIFO Multicast         |
+| **Rejoin Auction**                | Automatically rejoin an auction after transient disconnections | Reliable FIFO Multicast         |
+
+---
+
+
+
 # DS1 Project Proposal: Auction System
 
 ## Changes Based on Feedback
