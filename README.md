@@ -3,7 +3,7 @@
 ## Changes Based on Feedback
 
 1. **What is "reliable fifo broadcast"?**
-   -  reliable fifo multicast - udp? https://stackoverflow.com/questions/107668/what-do-you-use-when-you-need-reliable-udp/
+   -  reliable fifo multicast - udp https://stackoverflow.com/questions/107668/what-do-you-use-when-you-need-reliable-udp/
 
 2. **The heartbeat protocol could be further clarified**
    - Heartbeat Frequency: Heartbeat messages are sent every 2 seconds.
@@ -15,9 +15,14 @@
    - other scenarios?
 
 4. **Could you clarify what you mean by "total order, reliable unicast"?**
-   - Reliable total ordering multicast - TCP? ![Owner avatar](https://avatars.githubusercontent.com/u/856786?s=48&v=4) **[pysctp](https://github.com/P1sec/pysctp)**?
+   - Reliable total ordering multicast 
 
-   
+## Project Requirements
+- Dynamic Discovery of Hosts
+- Fault Tolerance
+- Election
+- Ordered Reliable Multicast
+
 ## Introduction
 This proposal outlines a distributed auction system built using Python, focusing on real-time auction creation and bidding. The system will be developed without a GUI, and code management will be handled through GitHub.
 
