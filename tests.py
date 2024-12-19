@@ -1,6 +1,7 @@
 
 import middleware
 import socket
+from time import sleep
 
 
 # used for preliminary, manual testing
@@ -16,8 +17,12 @@ def test1() -> None:
         if data:
             print("Received broadcast message:", data.decode())
 
+def test2() -> None:
+    MY_IP = socket.gethostbyname(socket.gethostname())
+    sock : socket.socket = middleware.setup_idle_grp_socket(MY_IP)
+    middleware.multicast(sock, middleware.Messages.INM.value)
 
 
 if __name__ == "__main__":
-    test1()
+    test2()
     
