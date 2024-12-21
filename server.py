@@ -36,34 +36,35 @@ class Server:
         AAN = 4
         PAN = 5
 
-
-    def __init__(self) -> None:
-        self.UUID : uuid.UUID = uuid.uuid4()     # generates a new UUID every time
-        self.state : Server.State = Server.State.UNINITIALIZED
-        #defaults to 127.0.0.1 for me. workaround: hardcode IP
-        self.MY_IP = socket.gethostbyname(socket.gethostname())
-        self.broadcast_sock = middleware.setup_broadcast_socket()
-        self.idle_grp_sock = middleware.setup_idle_grp_socket(self.MY_IP)
+    def __init__(self, port=5384) -> None:
+        self.UUID: uuid.UUID = uuid.uuid4()     # generates a new UUID every time
+        self.state: Server.State = Server.State.UNINITIALIZED
+        self.broadcast_sock: socket.socket = middleware.setup_broadcast_socket()
+        self.idle_grp_sock: socket.socket = middleware.setup_idle_grp_socket()
+        self.port = port
+        self.unicast_soc: socket.socket = middleware.setup_unicast_socket(self.port)
+        #self.MY_IP = middleware.get_my_ip()
         #self.neighbor = None
         #self.inm = None
+        self.main()
 
-
+    def main(self) -> None:
+        self.dynamic_discovery()
+        while True:
+            self.message_parser()
 
     def __str__(self) -> str:
         return f"Server: {self.UUID=} {self.state=}"
 
-
-
-    def collect_responses(self, sock : socket.socket, timeout : float=3.0) -> list[str]:
+    def collect_responses(self, timeout: float=3.0) -> list[str]:
         """
         Collects responses from a socket for a given amount of time.
 
         Example:
         responses : list[str] = self.collect_responses(self.idle_grp_sock, 1.0)
         """
-        print(f"Collecting responses for {timeout} second(s)...")
-        start_time : float = time.time()
-        responses : list[str] = []
+        start_time: float = time.time()
+        responses: list[str] = []
 
         while time.time() - start_time < timeout:
             # select will block until one of the following conditions are met:
@@ -72,12 +73,12 @@ class Server:
             # something in the third list has an exceptional condition
             # the timeout expires
             # on windows, this only works with sockets.
-            ready = select.select([sock], [], [], timeout + start_time - time.time())
-            if ready[0]:
+            ready, _, _ = select.select([self.idle_grp_sock, self.unicast_soc], [], [], timeout)
+            for sock in ready:
                 data, addr = sock.recvfrom(1024)
-                response = data.decode('utf-8')
-                responses.append((addr, response))
-                print(f"Received response from {addr}: {response}")
+                response: str = data.decode('utf-8')
+                responses.append(response)
+                print(f"response {response}")
         print(f"Collected {len(responses)} responses.")
         return responses
 
@@ -132,8 +133,6 @@ class Server:
 
 # used for dummy testing
 if __name__ == "__main__":
-    myserver : Server = Server()
-    print(myserver)
-    myserver.dynamic_discovery()
+    myserver: Server = Server(5385)
 
 
