@@ -117,11 +117,15 @@ class Server:
         Continuously listens for messages from the network.
         Messages are then parsed and forwarded to the correct handler.
         """
-        data, addr = self.idle_grp_sock.recvfrom(1024)
-        data = data.decode("utf-8")
-        print(f"Received {data} from {addr}")
-        if data == middleware.Messages.DISCOVERY.value:
-            middleware.multicast(self.idle_grp_sock, middleware.Messages.INM.value)
+        data, addr = self.idle_grp_sock.recvfrom(1024)   # listen for multicast messages to idle nodes
+        print(f"parsing message {data}")
+        data: list[str] = data.decode("utf-8").split(" ")
+        if data[0] == middleware.Messages.UUID_QUERY.value:
+            print("sending UUID_ANSWER")
+            middleware.unicast(self.unicast_soc, middleware.Messages.UUID_ANSWER, str(self.UUID), middleware.get_my_ip(), self.port, data[2], int(data[3]))
+            if self.state == Server.State.INM:
+                message: str = middleware.Messages.INM.value + " " + str(self.UUID)
+                #middleware.unicast(self.unicast_soc, message, addr)
         else:
             print("Received unknown message.")
 
