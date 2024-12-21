@@ -41,9 +41,8 @@ class Server:
         self.state: Server.State = Server.State.UNINITIALIZED
         self.broadcast_sock: socket.socket = middleware.setup_broadcast_socket()
         self.idle_grp_sock: socket.socket = middleware.setup_idle_grp_socket()
-        self.port = port
-        self.unicast_soc: socket.socket = middleware.setup_unicast_socket(self.port)
-        #self.MY_IP = middleware.get_my_ip()
+        self.port = port        # we need to make sure the port is unique for each IP address. TODO: how?
+        self.unicast_soc: middleware.UnicastSocket = middleware.UnicastSocket(self.port)
         #self.neighbor = None
         #self.inm = None
         self.main()
@@ -105,7 +104,7 @@ class Server:
             print(f"No other idle nodes alive. Declaring self = " + str(self) + " as INM.")
             self.state = Server.State.INM
         else:
-            print("Found other nodes. Joining pool of idle nodes.")
+            print(f"Found {len(responses)} other nodes. Joining pool of idle nodes.")
             self.state = Server.State.IDLE
             # save INM address
             # sort UUID addresses and find neighbor
@@ -122,12 +121,13 @@ class Server:
         data: list[str] = data.decode("utf-8").split(" ")
         if data[0] == middleware.Messages.UUID_QUERY.value:
             print("sending UUID_ANSWER")
-            middleware.unicast(self.unicast_soc, middleware.Messages.UUID_ANSWER, str(self.UUID), middleware.get_my_ip(), self.port, data[2], int(data[3]))
+            self.unicast_soc.send(middleware.Messages.UUID_ANSWER, str(self.UUID), data[2], int(data[3]))
             if self.state == Server.State.INM:
-                message: str = middleware.Messages.INM.value + " " + str(self.UUID)
-                #middleware.unicast(self.unicast_soc, message, addr)
+                print("sending INM_ANSWER")
+                self.unicast_soc.send(middleware.Messages.INM_ANSWER, str(self.UUID), data[2], int(data[3]))
         else:
             print("Received unknown message.")
+
 
 
 # used for dummy testing

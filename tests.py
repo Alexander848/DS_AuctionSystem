@@ -58,7 +58,6 @@ def test4() -> None:
 
 def test5() -> None:
     serv1: server.Server = server.Server(5385)
-    serv2: server.Server = server.Server(5386)
 
 
 if __name__ == "__main__":
