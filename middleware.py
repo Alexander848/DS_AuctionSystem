@@ -22,6 +22,11 @@ IDLE_GRP_IP = '224.1.1.1'
 IDLE_GRP_PORT = 5382
 MULTICAST_TTL = 2
 
+def get_my_ip() -> str:
+    # defaults to 127.0.0.1 for me. workaround: hardcode IP
+    #return socket.gethostbyname(socket.gethostname())
+    return "192.168.0.111"     # override IP
+
 
 def setup_broadcast_socket() -> socket.socket:
     # Create a UDP socket
