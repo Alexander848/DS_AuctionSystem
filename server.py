@@ -82,40 +82,35 @@ class Server:
         print(f"Collected {len(responses)} responses.")
         return responses
 
-
-
     def dynamic_discovery(self) -> None:
         """
         Dynamic discovery of other nodes in the idle pool.
         If no other nodes are found, declare self as INM.
+        Message consists of 4 parts separated by spaces: UUID_QUERY keyword, own UUID, ip address and port (to know where to send unicasts answers to).
         """
-        self.state : Server.State = Server.State.INITIALIZING
-        middleware.multicast(self.idle_grp_sock, middleware.Messages.DISCOVERY.value)
-        responses : list[str] = self.collect_responses(self.idle_grp_sock, 1.0)
-        print(responses)
-        if len(responses) <= 1:
-            print("No other nodes alive. Declaring self as INM.")
+        self.state: Server.State = Server.State.INITIALIZING
+        message: str = middleware.Messages.UUID_QUERY.value + " " \
+                        + str(self.UUID) + " " \
+                        + str(middleware.get_my_ip()) + " " \
+                        + str(self.port)
+        middleware.multicast(self.idle_grp_sock, message)
+        print(f"Collecting UUID_QUERY...")
+        responses: list[str] = self.collect_responses(2.0)
+        print(f"total {responses=}")
+        # "parse" raw responses into list
+        responses: list[list[str]] = [response.split(" ") for response in responses]
+        # filter out non-UUID_ANSWER messages
+        responses = [response for response in responses if response[0] == middleware.Messages.UUID_ANSWER.value]
+        if len(responses) == 0:
+            print(f"No other idle nodes alive. Declaring self = " + str(self) + " as INM.")
             self.state = Server.State.INM
         else:
             print("Found other nodes. Joining pool of idle nodes.")
             self.state = Server.State.IDLE
-
             # save INM address
             # sort UUID addresses and find neighbor
             # join pool of idle nodes
-        #self.message_parser()
-        
-
-
-    def join(self) -> None:
-        ...
-
-
-
-    def lcr(self) -> None:
-        ...
-
-
+        print("dynamic_discovery finished")
 
     def message_parser(self) -> None:
         """
