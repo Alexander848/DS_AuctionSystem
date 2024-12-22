@@ -19,12 +19,16 @@
 # detect aan failures, re-elect
 
 
-import middleware
 import uuid
 from enum import Enum
 import socket
 import time
 import select
+
+from middleware import MessageType
+from middleware import get_my_ip
+from middleware.multicast import MulticastSocket
+from middleware.unicast import UnicastSocket
 
 
 class Server:
@@ -37,14 +41,19 @@ class Server:
         PAN = 5
 
     def __init__(self, port=5384) -> None:
+        self.port = port        # we need to make sure the port is unique for each IP address. TODO: how?
+        self.ip = get_my_ip()
+
         self.UUID: uuid.UUID = uuid.uuid4()     # generates a new UUID every time
         self.state: Server.State = Server.State.UNINITIALIZED
-        self.broadcast_sock: socket.socket = middleware.setup_broadcast_socket()
-        self.idle_grp_sock: socket.socket = middleware.setup_idle_grp_socket()
-        self.port = port        # we need to make sure the port is unique for each IP address. TODO: how?
-        self.unicast_soc: middleware.UnicastSocket = middleware.UnicastSocket(self.port)
+        
+        #self.broadcast_sock: socket.socket = middleware.setup_broadcast_socket()
+        self.idle_grp_sock: MulticastSocket = MulticastSocket(self.port)
+        self.unicast_soc: UnicastSocket = UnicastSocket(self.port)
+        
         #self.neighbor = None
         #self.inm = None
+
         self.main()
 
     def main(self) -> None:
@@ -57,10 +66,11 @@ class Server:
 
     def collect_responses(self, timeout: float=3.0) -> list[str]:
         """
-        Collects responses from a socket for a given amount of time.
+        Collects responses from a both the multicast and the 
+        unicast socket for a given amount of time.
 
         Example:
-        responses : list[str] = self.collect_responses(self.idle_grp_sock, 1.0)
+        responses : list[str] = self.collect_responses(1.0)
         """
         start_time: float = time.time()
         responses: list[str] = []
@@ -85,21 +95,15 @@ class Server:
         """
         Dynamic discovery of other nodes in the idle pool.
         If no other nodes are found, declare self as INM.
-        Message consists of 4 parts separated by spaces: UUID_QUERY keyword, own UUID, ip address and port (to know where to send unicasts answers to).
         """
         self.state: Server.State = Server.State.INITIALIZING
-        message: str = middleware.Messages.UUID_QUERY.value + " " \
-                        + str(self.UUID) + " " \
-                        + str(middleware.get_my_ip()) + " " \
-                        + str(self.port)
-        middleware.multicast(self.idle_grp_sock, message)
+        self.idle_grp_sock.send(MessageType.UUID_QUERY, str(self.UUID))
         print(f"Collecting UUID_QUERY...")
         responses: list[str] = self.collect_responses(2.0)
-        print(f"total {responses=}")
         # "parse" raw responses into list
         responses: list[list[str]] = [response.split(" ") for response in responses]
         # filter out non-UUID_ANSWER messages
-        responses = [response for response in responses if response[0] == middleware.Messages.UUID_ANSWER.value]
+        responses = [response for response in responses if response[0] == MessageType.UUID_ANSWER.value]
         if len(responses) == 0:
             print(f"No other idle nodes alive. Declaring self = " + str(self) + " as INM.")
             self.state = Server.State.INM
@@ -117,21 +121,24 @@ class Server:
         Messages are then parsed and forwarded to the correct handler.
         """
         data, addr = self.idle_grp_sock.recvfrom(1024)   # listen for multicast messages to idle nodes
-        print(f"parsing message {data}")
+        print(f"\nparsing message {data}")
         data: list[str] = data.decode("utf-8").split(" ")
-        if data[0] == middleware.Messages.UUID_QUERY.value:
+        if data[0] == MessageType.UUID_QUERY.value:
             print("sending UUID_ANSWER")
-            self.unicast_soc.send(middleware.Messages.UUID_ANSWER, str(self.UUID), data[2], int(data[3]))
+            self.unicast_soc.send(MessageType.UUID_ANSWER, str(self.UUID), data[2], 
+            int(data[3]))
             if self.state == Server.State.INM:
                 print("sending INM_ANSWER")
-                self.unicast_soc.send(middleware.Messages.INM_ANSWER, str(self.UUID), data[2], int(data[3]))
+                self.unicast_soc.send(MessageType.INM_ANSWER, str(self.UUID), data[2], int(data[3]))
+        elif data[0] == MessageType.TEST.value:
+            print(f"classified as test message.")
         else:
-            print("Received unknown message.")
+            print("classified as unknown message.")
 
 
 
 # used for dummy testing
 if __name__ == "__main__":
-    myserver: Server = Server(5385)
+    myserver: Server = Server(5384)
 
 
