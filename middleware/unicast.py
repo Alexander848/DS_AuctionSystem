@@ -1,6 +1,7 @@
 
 import socket
 from middleware import MessageType
+from middleware import Message
 from middleware import get_my_ip
 
 
@@ -24,9 +25,18 @@ class UnicastSocket(socket.socket):
 
     # overrides parents method
     def send(self, message_type: MessageType, content: str, target_ip: str, target_port: int) -> None:
-        message: str = f"{message_type.value} {content} {self.ip} {self.port}"
+        #message: str = f"{message_type.value} {content} {self.ip} {self.port}"
+        message: Message = Message(message_type, content, self.ip, self.port)
         target_addr: tuple = (target_ip, target_port)
-        self.sendto(message.encode("utf-8"), target_addr)
+        self.sendto(str(message).encode("utf-8"), target_addr)
+
+    def receive(self, buffsize: int=1024) -> Message:
+        raw, adrr = self.recvfrom(buffsize)
+        data: list[str] = raw.decode("utf-8").split(" ")
+        message: Message = Message(MessageType(data[0]), data[1], data[2], int(data[3]))
+        # TODO send acknowledge
+        return message
+
 
 
 

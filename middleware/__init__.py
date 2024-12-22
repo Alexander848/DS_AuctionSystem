@@ -16,6 +16,17 @@ class MessageType(Enum):
     INM_ANSWER = "INM_ANSWER"           # INM response to get INM address
 
 
+class Message():
+    def __init__(self, message_type: MessageType = MessageType.TEST, content: str = "", src_ip: str = "-1", src_port: int = -1) -> None:
+        self.message_type : MessageType = message_type
+        self.content: str = content
+        self.src_ip: str = src_ip
+        self.src_port: int = src_port
+
+    def __str__(self) -> str:
+        return f"{self.message_type.value} {self.content} {self.src_ip} {self.src_port}"
+
+
 def get_my_ip() -> str:
     # defaults to 127.0.0.1 for me. workaround: hardcode IP
     #return socket.gethostbyname(socket.gethostname())

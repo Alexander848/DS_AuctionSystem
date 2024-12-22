@@ -1,9 +1,6 @@
 
-import middleware
-import socket
-import time
-
 import server
+from middleware import Message
 from middleware import MessageType
 from middleware import get_my_ip
 from middleware.unicast import UnicastSocket
@@ -55,28 +52,28 @@ from middleware.multicast import MulticastSocket
 
 def test_unicast_send_receive() -> None:
     sock: UnicastSocket = UnicastSocket(5385)
-    sock.send(MessageType.TEST, "test unicast", get_my_ip(), 5384)
-    data, addr = sock.recvfrom(1024)
-    print(data.decode())
+    sock.send(MessageType.TEST, "test_unicast", get_my_ip(), 5384)
+    msg: Message = sock.receive()
+    print(str(msg))
 
 def test_unicast_echo() -> None:
     sock: UnicastSocket = UnicastSocket(5385)
-    data, addr = sock.recvfrom(1024)
-    print(data.decode())
-    sock.send(MessageType.TEST, "test unicast", get_my_ip(), 5384)
+    msg: Message = sock.receive()
+    print(str(msg))
+    sock.send(MessageType.TEST, "test_unicast", get_my_ip(), 5384)
 
 
 def test_multicast_send_receive() -> None:
     sock: MulticastSocket = MulticastSocket(5385)
-    sock.send(MessageType.TEST, "test multicast")
-    data, addr = sock.recvfrom(1024)
-    print(data.decod())
+    sock.send(MessageType.TEST, "test_multicast")
+    msg: Message = sock.receive()
+    print(str(msg))
 
 def test_multicast_echo() -> None:
     sock: MulticastSocket = MulticastSocket(5385)
-    data, addr = sock.recvfrom(1024)
-    print(data.decod())
-    sock.send(MessageType.TEST, "test multicast")
+    msg: Message = sock.receive()
+    print(str(msg))
+    sock.send(MessageType.TEST, "test_multicast")
 
 
 def test5() -> None:

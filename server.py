@@ -25,6 +25,7 @@ import socket
 import time
 import select
 
+from middleware import Message
 from middleware import MessageType
 from middleware import get_my_ip
 from middleware.multicast import MulticastSocket
@@ -51,8 +52,8 @@ class Server:
         self.idle_grp_sock: MulticastSocket = MulticastSocket(self.port)
         self.unicast_soc: UnicastSocket = UnicastSocket(self.port)
         
+        self.inm: tuple[str, int] = ("", -1) 
         #self.neighbor = None
-        #self.inm = None
 
         self.main()
 
@@ -64,7 +65,7 @@ class Server:
     def __str__(self) -> str:
         return f"Server: {self.UUID=} {self.state=}"
 
-    def collect_responses(self, timeout: float=3.0) -> list[str]:
+    def collect_responses(self, timeout: float=3.0) -> list[Message]:
         """
         Collects responses from a both the multicast and the 
         unicast socket for a given amount of time.
@@ -73,7 +74,7 @@ class Server:
         responses : list[str] = self.collect_responses(1.0)
         """
         start_time: float = time.time()
-        responses: list[str] = []
+        responses: list[Message] = []
 
         while time.time() - start_time < timeout:
             # select will block until one of the following conditions are met:
@@ -84,10 +85,9 @@ class Server:
             # on windows, this only works with sockets.
             ready, _, _ = select.select([self.idle_grp_sock, self.unicast_soc], [], [], timeout)
             for sock in ready:
-                data, addr = sock.recvfrom(1024)
-                response: str = data.decode('utf-8')
-                responses.append(response)
-                print(f"response {response}")
+                received_message: Message = sock.receive()
+                responses.append(received_message)
+                print(f"response {received_message}")
         print(f"Collected {len(responses)} responses.")
         return responses
 
@@ -99,18 +99,21 @@ class Server:
         self.state: Server.State = Server.State.INITIALIZING
         self.idle_grp_sock.send(MessageType.UUID_QUERY, str(self.UUID))
         print(f"Collecting UUID_QUERY...")
-        responses: list[str] = self.collect_responses(2.0)
-        # "parse" raw responses into list
-        responses: list[list[str]] = [response.split(" ") for response in responses]
+        responses: list[Message] = self.collect_responses(2.0)
         # filter out non-UUID_ANSWER messages
-        responses = [response for response in responses if response[0] == MessageType.UUID_ANSWER.value]
-        if len(responses) == 0:
+        uuid_answers: list[Message] = [msg for msg in responses if msg.message_type == MessageType.UUID_ANSWER]
+        if len(uuid_answers) == 0:
             print(f"No other idle nodes alive. Declaring self = " + str(self) + " as INM.")
             self.state = Server.State.INM
         else:
-            print(f"Found {len(responses)} other nodes. Joining pool of idle nodes.")
+            print(f"Found {len(uuid_answers)} other nodes. Joining pool of idle node(s).")
             self.state = Server.State.IDLE
-            # save INM address
+            inm_response: list[Message] = [msg for msg in responses if msg.message_type == MessageType.INM_ANSWER]
+            if len(inm_response) != 1:
+                print(f"ERROR: recieved {len(inm_response)} inm responses instead of only 1!")
+                return
+            self.inm = (inm_response[0].src_ip, int(inm_response[0].src_port))
+            print(f"updated {self.inm=}")
             # sort UUID addresses and find neighbor
             # join pool of idle nodes
         print("dynamic_discovery finished")
@@ -120,9 +123,9 @@ class Server:
         Continuously listens for messages from the network.
         Messages are then parsed and forwarded to the correct handler.
         """
-        data, addr = self.idle_grp_sock.recvfrom(1024)   # listen for multicast messages to idle nodes
-        print(f"\nparsing message {data}")
-        data: list[str] = data.decode("utf-8").split(" ")
+        raw_data, addr = self.idle_grp_sock.recvfrom(1024)   # listen for multicast messages to idle nodes
+        print(f"\nparsing message {raw_data}")
+        data: list[str] = raw_data.decode("utf-8").split(" ")
         if data[0] == MessageType.UUID_QUERY.value:
             print("sending UUID_ANSWER")
             self.unicast_soc.send(MessageType.UUID_ANSWER, str(self.UUID), data[2], 

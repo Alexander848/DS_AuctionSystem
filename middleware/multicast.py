@@ -1,6 +1,7 @@
 
 import socket
 from middleware import get_my_ip
+from middleware import Message
 from middleware import MessageType
 
 # multicast settings
@@ -38,7 +39,10 @@ class MulticastSocket(socket.socket):
         message: str = f"{message_type.value} {content} {self.ip} {self.port}"
         self.sendto(message.encode("utf-8"), (self.group_ip, self.group_port))
 
-
+    def receive(self, buffsize: int=1024) -> Message:
+        raw, adrr = self.recvfrom(buffsize)
+        data: list[str] = raw.decode("utf-8").split(" ")
+        return Message(MessageType(data[0]), data[1], data[2], int(data[3]))
 
 
 
