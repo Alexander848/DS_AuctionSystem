@@ -13,6 +13,9 @@ class MessageType(Enum):
     TEST = "TEST"                       # test message
     UUID_QUERY = "UUID_QUERY"           # unicast to send UUID
     UUID_ANSWER = "UUID_ANSWER"         # unicast to send UUID
+    ELECTION_START = "ELECTION_START"   # starts an election. election message.
+    ELECTION_ACK = "ELECTION_ACK"       # acknowledges. ok/alive message.
+    DECLARE_INM = "DECLARE_INM"         # declares the sender to be the INM. coordination message.
     INM_ANSWER = "INM_ANSWER"           # INM response to get INM address
 
 

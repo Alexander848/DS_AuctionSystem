@@ -4,7 +4,7 @@
 # uid management
 # dynamic discovery
 # join pool of idle nodes
-# LCR
+# LCR -> bully algorithm
 
 # for INM:
 # start auction
@@ -19,11 +19,12 @@
 # detect aan failures, re-elect
 
 
+from typing import Callable
 import uuid
-from enum import Enum
-import socket
 import time
 import select
+from enum import Enum
+from threading import Thread
 
 from middleware import Message
 from middleware import MessageType
@@ -33,42 +34,104 @@ from middleware.unicast import UnicastSocket
 
 
 class Server:
+    """
+    The server class to manage server nodes. Every node is 
+    modeled after a state machine. 
+    """
+    
     class State(Enum):
+        """
+        The possible states which any given node can be in.
+        """
         UNINITIALIZED = 0
-        INITIALIZING = 1
+        #INITIALIZING = 1
         IDLE = 2
         INM = 3
-        AAN = 4
-        PAN = 5
 
-    def __init__(self, port=5384) -> None:
-        self.port = port        # we need to make sure the port is unique for each IP address. TODO: how?
-        self.ip = get_my_ip()
 
-        self.UUID: uuid.UUID = uuid.uuid4()     # generates a new UUID every time
+    class Node:
+        """
+        This class represents server nodes in the idle group.
+        It is used to manage the group view.
+        """
+        def __init__(self, _ip, _port, _uuid):
+            self.ip: str = _ip
+            self.port: int = _port
+            self.uuid: uuid.UUID = _uuid
+
+        def __str__(self) -> str:
+            return f"({self.ip} {self.port} {self.uuid})"
+        
+        def __repr__(self) -> str:
+            return str(self)
+
+
+    def __init__(self, port=5384, set_uuid: int=-1) -> None:
+        """
+        This is the constructer of the Server class and is 
+        the first method which executes. It declares the
+        member variables of a node and initializes them.
+        Also note the call to the main() method at the end
+        to transfer the program flow.
+        """
+        # we need to make sure the port is unique for each IP address. TODO: how?
+        self.port: int = port
+        self.ip: str= get_my_ip()
+        # sets custom uuid, else generates a new UUID every time
+        self.uuid: uuid.UUID = uuid.uuid4() if set_uuid==-1 else uuid.UUID(int=port)    
         self.state: Server.State = Server.State.UNINITIALIZED
         
-        #self.broadcast_sock: socket.socket = middleware.setup_broadcast_socket()
         self.idle_grp_sock: MulticastSocket = MulticastSocket(self.port)
         self.unicast_soc: UnicastSocket = UnicastSocket(self.port)
         
-        self.inm: tuple[str, int] = ("", -1) 
-        #self.neighbor = None
+        # group view consists of list of nodes. keeps track of ip, port and uuid.
+        # TODO need to get rid off dead nodes over time
+        self.groupview: set[Server.Node] = set([Server.Node(self.ip, self.port, self.uuid)])
+        self.inm: Server.Node = Server.Node("", -1, -1)
+
+        self.inm_thread: Thread = Thread()      # this thread is used as a timeout for election acks 
+        self.received_ack: bool = False         # this bool is used to communicate with the thread
 
         self.main()
 
     def main(self) -> None:
+        """
+        The top-level program for the state machine to execute after 
+        initialization. Used to call methods which implement concrete 
+        functionalities.
+        """
+        print(f"starting server as {self=}")
         self.dynamic_discovery()
+        # causes election to start in message_parser
+        self.unicast_soc.send(MessageType.ELECTION_START, str(self.uuid), self.ip, self.port)
+        self.state = Server.State.IDLE
+        # main loop
         while True:
             self.message_parser()
 
     def __str__(self) -> str:
-        return f"Server: {self.UUID=} {self.state=}"
+        """
+        Used to get a pretty and human readable output on str(self) 
+        for debugging/logging purposes. The default behaviour prints 
+        the memory address of the object.
+        example: print(str(self))
+        """
+        return f"Server: {self.uuid=} {self.state.value=} {self.ip} {self.port}"
+    
+    def __repr__(self) -> str:
+        """
+        Similar to __str__ it pretty-fies the string output. It 
+        is used for concatenation with strings such that we can
+        get rid of the explicit str() type conversion.
+        example: print(self)
+        """
+        return str(self)
 
-    def collect_responses(self, timeout: float=3.0) -> list[Message]:
+    def collect_responses(self, timeout: float=1.0) -> list[Message]:
         """
         Collects responses from a both the multicast and the 
-        unicast socket for a given amount of time.
+        unicast socket for a given amount of time. Note that 
+        this method is blocking.
 
         Example:
         responses : list[str] = self.collect_responses(1.0)
@@ -77,13 +140,17 @@ class Server:
         responses: list[Message] = []
 
         while time.time() - start_time < timeout:
-            # select will block until one of the following conditions are met:
+            # The select syscall will block until one of the following conditions are met:
             # something in the first list is readable
             # something in the second list is writable
             # something in the third list has an exceptional condition
             # the timeout expires
             # on windows, this only works with sockets.
-            ready, _, _ = select.select([self.idle_grp_sock, self.unicast_soc], [], [], timeout)
+            ready, _, _ = select.select([self.idle_grp_sock, self.unicast_soc], 
+                                        [], 
+                                        [], 
+                                        start_time - time.time() + timeout)
+            #ready, _, _ = select.select([self.unicast_soc], [], [], timeout)
             for sock in ready:
                 received_message: Message = sock.receive()
                 responses.append(received_message)
@@ -94,49 +161,74 @@ class Server:
     def dynamic_discovery(self) -> None:
         """
         Dynamic discovery of other nodes in the idle pool.
-        If no other nodes are found, declare self as INM.
+        Uses the responses to update the groupview with new
+        Server.Node entries.
         """
-        self.state: Server.State = Server.State.INITIALIZING
-        self.idle_grp_sock.send(MessageType.UUID_QUERY, str(self.UUID))
+        self.idle_grp_sock.send(MessageType.UUID_QUERY, str(self.uuid))
         print(f"Collecting UUID_QUERY...")
-        responses: list[Message] = self.collect_responses(2.0)
+        responses: list[Message] = self.collect_responses()
         # filter out non-UUID_ANSWER messages
         uuid_answers: list[Message] = [msg for msg in responses if msg.message_type == MessageType.UUID_ANSWER]
-        if len(uuid_answers) == 0:
-            print(f"No other idle nodes alive. Declaring self = " + str(self) + " as INM.")
-            self.state = Server.State.INM
-        else:
-            print(f"Found {len(uuid_answers)} other nodes. Joining pool of idle node(s).")
-            self.state = Server.State.IDLE
-            inm_response: list[Message] = [msg for msg in responses if msg.message_type == MessageType.INM_ANSWER]
-            if len(inm_response) != 1:
-                print(f"ERROR: recieved {len(inm_response)} inm responses instead of only 1!")
-                return
-            self.inm = (inm_response[0].src_ip, int(inm_response[0].src_port))
-            print(f"updated {self.inm=}")
-            # sort UUID addresses and find neighbor
-            # join pool of idle nodes
-        print("dynamic_discovery finished")
+        for answer in uuid_answers:
+            new_node: Server.Node = Server.Node(answer.src_ip, answer.src_port, uuid.UUID(answer.content))
+            self.groupview.add(new_node)
+        print(f"dyn discovery finished. total nodes is {len(self.groupview)=}")
+
+    def start_election(self) -> None:
+        """
+        This method sends ELECTION_START messages 
+        to all nodes with a higher UUID than self.uuid
+        """
+        higher_id_nodes: list[Server.Node] = [node for node in self.groupview if node.uuid > self.uuid ]
+        print(f"{len(higher_id_nodes)=}")
+        for node in higher_id_nodes:
+            self.unicast_soc.send(MessageType.ELECTION_START, str(self.uuid), node.ip, node.port)
+        print(f"started election")
+
+    def declare_inm(self, received_ack: Callable[[], bool], timeout: float=1.0) -> None:
+        """
+        Used by the inm_thread to wait for the specified amount of 
+        time and then check if ELECTION_ACKs have been received. If 
+        not, multicast DECLARE_INM to idle group.
+        """
+        time.sleep(timeout)
+        if received_ack():
+            return
+        print(f"declaring itself inm")
+        self.state = Server.State.INM
+        self.idle_grp_sock.send(MessageType.DECLARE_INM, str(self.uuid))
 
     def message_parser(self) -> None:
         """
         Continuously listens for messages from the network.
         Messages are then parsed and forwarded to the correct handler.
         """
-        raw_data, addr = self.idle_grp_sock.recvfrom(1024)   # listen for multicast messages to idle nodes
-        print(f"\nparsing message {raw_data}")
-        data: list[str] = raw_data.decode("utf-8").split(" ")
-        if data[0] == MessageType.UUID_QUERY.value:
-            print("sending UUID_ANSWER")
-            self.unicast_soc.send(MessageType.UUID_ANSWER, str(self.UUID), data[2], 
-            int(data[3]))
-            if self.state == Server.State.INM:
-                print("sending INM_ANSWER")
-                self.unicast_soc.send(MessageType.INM_ANSWER, str(self.UUID), data[2], int(data[3]))
-        elif data[0] == MessageType.TEST.value:
-            print(f"classified as test message.")
+        # wait for a message on either the idle group socket or the unicast socket
+        ready, _, _ = select.select([self.idle_grp_sock, self.unicast_soc], [], [])
+        msg: Message = ready[0].receive()
+        print(f"{msg}\n")
+        if msg.message_type == MessageType.UUID_QUERY:
+            self.groupview.add(Server.Node(msg.src_ip, msg.src_port, uuid.UUID(msg.content)))
+            self.unicast_soc.send(MessageType.UUID_ANSWER, str(self.uuid), msg.src_ip, msg.src_port)
+        elif msg.message_type == MessageType.ELECTION_START:
+            if msg.content != str(self.uuid):
+                self.unicast_soc.send(MessageType.ELECTION_ACK, "", msg.src_ip, msg.src_port)
+            self.start_election()
+            print(f"starting inm thread")
+            self.inm_thread: Thread = Thread(target=self.declare_inm, args=(lambda: self.received_ack,))
+            self.inm_thread.start()
+        elif msg.message_type == MessageType.ELECTION_ACK:
+            print(f"cancelling inm thread")
+            self.received_ack = True
+            self.inm_thread.join()
+            self.received_ack = False
+        elif msg.message_type == MessageType.DECLARE_INM:
+            self.inm = Server.Node(msg.src_ip, msg.src_port, uuid.UUID(msg.content))
+            print(f"new {self.inm=}")
+        elif msg.message_type == MessageType.TEST:
+            print(f"TEST_MESSAGE")
         else:
-            print("classified as unknown message.")
+            print("ERROR: Unknown message")
 
 
 

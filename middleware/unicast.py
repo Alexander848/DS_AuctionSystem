@@ -25,16 +25,24 @@ class UnicastSocket(socket.socket):
 
     # overrides parents method
     def send(self, message_type: MessageType, content: str, target_ip: str, target_port: int) -> None:
-        #message: str = f"{message_type.value} {content} {self.ip} {self.port}"
+        """
+        Assume unreliable channels but sensible network configuration (every node
+        can be reached from any other node, but packages can be dropped at any time). 
+        Assume synchronous communication (upper bounds for message transition times).
+        Aim for exactly once semantics: retry + deduplication or retry + idempotency
+        of messages. 
+        We want at least FIFO channels -> logical timestamps/sequence numbers.
+        """
+        # TODO retries, deduplication/idempotency
         message: Message = Message(message_type, content, self.ip, self.port)
         target_addr: tuple = (target_ip, target_port)
         self.sendto(str(message).encode("utf-8"), target_addr)
 
     def receive(self, buffsize: int=1024) -> Message:
-        raw, adrr = self.recvfrom(buffsize)
+        raw: bytes = self.recv(buffsize)
         data: list[str] = raw.decode("utf-8").split(" ")
         message: Message = Message(MessageType(data[0]), data[1], data[2], int(data[3]))
-        # TODO send acknowledge
+        # TODO send acknowledge back to src
         return message
 
 

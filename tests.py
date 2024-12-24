@@ -77,14 +77,17 @@ def test_multicast_echo() -> None:
 
 
 def test5() -> None:
-    serv1: server.Server = server.Server(5385)
+    serv1: server.Server = server.Server(5385, set_uuid=1)
 
 
 if __name__ == "__main__":
     test5()
 
 
-
+# paste into cli:
+# python -c "import server; server.Server(5384, set_uuid=1)"
+# python -c "import server; server.Server(5385, set_uuid=2)"
+# python -c "import server; server.Server(5386, set_uuid=3)"
 
 
 
