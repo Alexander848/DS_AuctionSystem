@@ -15,14 +15,14 @@ def send_msg_and_wait() -> None:
     socket = UnicastSocket(5900)
     print("socket1: Sending message")
     socket.send(MessageType.TEST, "hello", get_my_ip(), 5901)
-    #msg = socket.receive()
-    #print(msg)
+    msg = socket.receive()
+    print(msg)
 
 def receive_msg_and_send() -> None:
     socket = UnicastSocket(5901)
     print("socket2 waits")
     msg = socket.receive()
-    #print(msg)
+    print(msg)
 
 
 if __name__ == "__main__":

@@ -211,6 +211,7 @@ class Server:
             self.groupview.add(Server.Node(msg.src_ip, msg.src_port, uuid.UUID(msg.content)))
             self.unicast_soc.send(MessageType.UUID_ANSWER, str(self.uuid), msg.src_ip, msg.src_port)
         elif msg.message_type == MessageType.ELECTION_START:
+            print("Got Election Start: {}".format(msg))
             if msg.content != str(self.uuid):
                 self.unicast_soc.send(MessageType.ELECTION_ACK, "", msg.src_ip, msg.src_port)
             self.start_election()

@@ -52,6 +52,9 @@ class UnicastSocket(socket.socket):
             target_addr: tuple = (target_ip, target_port)
             self.sendto(str(message).encode("utf-8"), target_addr)
 
+            # Election messages get handled by server
+            if message.message_type == MessageType.ELECTION_ACK or message.message_type == MessageType.ELECTION_START:
+                return
             # Wait for Ack or Timeout
             t_timeout = time.time() + ack_timeout
             while time.time() < t_timeout:
@@ -60,24 +63,26 @@ class UnicastSocket(socket.socket):
                     raw: bytes = self.recv(ack_buffsize)
                     data: list[str] = raw.decode("utf-8").split(" ")
                     ack_message: Message = Message(MessageType(data[0]), data[1], data[2], int(data[3]), int(data[4]))
-                    # check if this is the right message
+                    # check if this is the right Ack message
                     if (ack_message.message_type == MessageType.UNICAST_ACK and ack_message.src_ip == get_my_ip() and
                             ack_message.src_port == self.port and ack_message.message_id == message_id):
                         # Correct Ack received, exit function
                         return
 
-
         # throw an error. Couldn't reach receiver TODO errorhandling
 
 
-    # Catches incoming messages and answers Unicast_Ack message, ignores incoming Unicast_Ack messages
+    # Catches incoming messages and answers with Unicast_Ack message, ignores incoming Unicast_Ack and Election messages
     def receive(self, buffsize: int=1024) -> Message:
         while True:
             raw: bytes = self.recv(buffsize)
             data: list[str] = raw.decode("utf-8").split(" ")
             message: Message = Message(MessageType(data[0]), data[1], data[2], int(data[3]), int(data[4]))
 
-            # Ignore Unicast_Ack messages
+            if message.message_type is MessageType.ELECTION_ACK or message.message_type is MessageType.ELECTION_START:
+                return message
+
+            # Send Ack for regular Unicast messages, Ignore received Ack messages
             if message.message_type is not MessageType.UNICAST_ACK :
                 # send acknowledgement back to sender
                 message.message_type = MessageType.UNICAST_ACK
