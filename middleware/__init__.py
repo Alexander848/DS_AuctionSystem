@@ -17,6 +17,14 @@ class MessageType(Enum):
     LIST_ITEMS_RESPONSE = "LIST_ITEMS_RESPONSE"
     CONNECT_REQUEST = "CONNECT_REQUEST"
     CONNECT_RESPONSE = "CONNECT_RESPONSE"
+    START_AUCTION_REQUEST = "START_AUCTION_REQUEST"
+    START_AUCTION_RESPONSE = "START_AUCTION_RESPONSE"
+    AUCTION_INIT = "AUCTION_INIT"
+    PAN_REQUEST = "PAN_REQUEST"
+    PAN_RESPONSE = "PAN_RESPONSE"
+    STATE_QUERY = "STATE_QUERY"
+    STATE_RESPONSE = "STATE_RESPONSE"
+    PAN_FAILURE = "PAN_FAILURE"
 
 class Message():
     def __init__(self, message_type: MessageType = MessageType.TEST, content: str = "", src_ip: str = "-1", src_port: int = -1) -> None:

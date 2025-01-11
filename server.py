@@ -53,6 +53,8 @@ class Server:
         # INITIALIZING = 1
         IDLE = 2
         INM = 3
+        AAN = 4
+        PAN = 5
 
 
     class Node:
@@ -98,9 +100,14 @@ class Server:
         # TODO need to get rid off dead nodes over time
         self.groupview: set[Server.Node] = set([Server.Node(self.ip, self.port, self.uuid)])
         self.inm: Server.Node = Server.Node("", -1, -1)
+        self.pan_node: Server.Node = None # Keep track of the assigned PAN
 
         self.inm_thread: Thread = Thread()  # this thread is used as a timeout for election acks
         self.received_ack: bool = False  # this bool is used to communicate with the thread
+
+        self.info_thread: Thread = Thread(target=self.periodic_info_print)
+        self.info_thread.daemon = True  # Allow the main thread to exit even if this thread is running
+        self.info_thread.start()
 
         self.main()
 
@@ -138,6 +145,26 @@ class Server:
         """
         print(f"  [server.py] [Server.__repr__] Server: {self.uuid=} {self.state.value=} {self.ip} {self.port}")
         return str(self)
+
+    def print_info(self) -> None:
+        """Prints the server's information to the console."""
+        print(f"\n===== Server Info =====")
+        print(f"  UUID: {self.uuid}")
+        print(f"  State: {self.state.name}")
+        print(f"  IP: {self.ip}")
+        print(f"  Port: {self.port}")
+        if self.state == Server.State.AAN:
+            print(f"  Auction Item: {self.item_id}")
+            print(f"  Client: {self.client_address}")
+        elif self.state == Server.State.PAN:
+            print(f"  Assigned to AAN: {self.aan_node.uuid} ({self.aan_node.ip}:{self.aan_node.port})")
+        print(f"=======================\n")
+
+    def periodic_info_print(self) -> None:
+        """Periodically prints the server's information."""
+        while True:
+            self.print_info()
+            time.sleep(5)
 
     def get_available_items_from_api(self) -> list[dict]:
         # In a real scenario, you'd query an external API
@@ -265,6 +292,9 @@ class Server:
                     msg.src_ip,
                     msg.src_port,
                 )
+        elif msg.message_type == MessageType.STATE_QUERY:
+            print(f"    [server.py] [Server.message_parser] STATE_QUERY")
+            self.unicast_soc.send(MessageType.STATE_RESPONSE, self.state.name, msg.src_ip, msg.src_port)
         elif msg.message_type == MessageType.LIST_ITEMS_REQUEST:
             if self.state == Server.State.INM:
                 print(f"    [server.py] [Server.message_parser] LIST_ITEMS_REQUEST")
@@ -281,10 +311,143 @@ class Server:
                     MessageType.LIST_ITEMS_RESPONSE,
                     items_str,
                     msg.src_ip,
-                    5384,
+                    msg.src_port,
                 )
+        elif msg.message_type == MessageType.START_AUCTION_REQUEST:
+            if self.state == Server.State.INM:
+                print(f"    [server.py] [Server.message_parser] START_AUCTION_REQUEST")
+                self.start_auction(msg.content, msg.src_ip, msg.src_port)
+        elif msg.message_type == MessageType.AUCTION_INIT:
+            if self.state == Server.State.IDLE:  # Only idle nodes can become AANs
+                print(f"    [server.py] [Server.message_parser] AUCTION_INIT")
+                item_id, client_ip, client_port = msg.content.split(",")
+                self.initialize_auction(item_id, client_ip, int(client_port))
+        elif msg.message_type == MessageType.PAN_REQUEST:
+            if self.state == Server.State.INM:
+                print(f"    [server.py] [Server.message_parser] PAN_REQUEST")
+                self.request_pan(msg.content)
+        elif msg.message_type == MessageType.PAN_RESPONSE:
+            if self.state == Server.State.IDLE:  # Only idle nodes can become PANs
+                print(f"    [server.py] [Server.message_parser] PAN_RESPONSE")
+                self.set_as_pan(msg.content)
         else:
             print("     [server.py] [Server.message_parser] ERROR: Unknown message")
+
+    def start_auction(self, item_id: str, client_ip: str, client_port: int) -> None:
+        """
+        Handles the START_AUCTION_REQUEST when the server is the INM.
+        """
+        print(f"  [server.py] [Server.start_auction] Received START_AUCTION_REQUEST for item '{item_id}' from {client_ip}:{client_port}")
+
+        # 1. Select an Idle Node as AAN
+        aan_node = self.select_idle_node()
+
+        if aan_node is None:
+            print(f"  [server.py] [Server.start_auction] No idle nodes available.")
+            self.unicast_soc.send(MessageType.START_AUCTION_RESPONSE, "ERROR: No idle nodes available", client_ip, client_port)
+            return
+        print(f"  [server.py] [Server.start_auction] Selected {aan_node} as AAN")
+        # 2. Inform the Chosen Node that it's the AAN
+        auction_data = f"{item_id},{client_ip},{client_port}"  # Include client address for communication
+        self.unicast_soc.send(MessageType.AUCTION_INIT, auction_data, aan_node.ip, aan_node.port)
+        print(f"  [server.py] [Server.start_auction] Sent AUCTION_INIT to AAN at {aan_node.ip}:{aan_node.port}")
+
+        # 3. Respond to Client with AAN Address
+        self.unicast_soc.send(MessageType.START_AUCTION_RESPONSE, f"{aan_node.ip},{aan_node.port}", client_ip, client_port)
+        print(f"  [server.py] [Server.start_auction] Sent START_AUCTION_RESPONSE to client at {client_ip}:{client_port}")
+
+    def select_idle_node(self) -> Node:
+        """
+        Selects a single idle node from the groupview.
+        """
+        print(f"  [server.py] [Server.select_idle_node] Selecting an Idle Node")
+        for node in self.groupview:
+            # Iterate through the groupview set directly
+            print(f"  [server.py] [Server.select_idle_node] Checking node {node}")
+            if node.uuid != self.uuid:  # Skip the current node itself
+                # Check the state of each node in groupview using self.get_node_state
+                node_state = self.get_node_state(node)
+                print(f"  [server.py] [Server.select_idle_node] node state is {node_state}")
+                if node_state == Server.State.IDLE:
+                    return node
+        return None
+
+    def get_node_state(self, node: Node) -> State:
+        """
+        Gets the state of a given node by sending a STATE_QUERY message.
+        """
+        print(f"  [server.py] [Server.get_node_state] Getting state of node {node.uuid}")
+
+        # Send a STATE_QUERY message to the node
+        self.unicast_soc.send(MessageType.STATE_QUERY, "", node.ip, node.port)
+
+        # Wait for a response (with a timeout)
+        ready, _, _ = select.select([self.unicast_soc], [], [], 1.0)  # 1 second timeout
+
+        if ready:
+            response: Message = ready[0].receive()
+            if response.message_type == MessageType.STATE_RESPONSE:
+                print(f"  [server.py] [Server.get_node_state] Received state {response.content} from node {node.uuid}")
+                return Server.State[response.content]  # Convert string back to State enum
+            else:
+                print(f"  [server.py] [Server.get_node_state] Invalid response from node {node.uuid}")
+
+        print(f"  [server.py] [Server.get_node_state] No response from node {node.uuid} within timeout")
+        return Server.State.UNINITIALIZED  # Or some other default state if no response
+
+    def initialize_auction(self, item_id: str, client_ip: str, client_port: int) -> None:
+        """
+        Initializes the auction when the server is the chosen AAN.
+
+        """
+        print(f"  [server.py] [Server.initialize_auction] Initializing auction for item '{item_id}'")
+
+        # 1. Store Auction Information
+        self.item_id = item_id
+        #self.starting_price = starting_price
+        #self.highest_bid =
+        #self.highest_bidder = None
+        self.client_address = (client_ip, client_port) # Store client address for communication
+        self.state = Server.State.AAN # Update the state to AAN
+
+        # 2. Request a PAN from INM
+        self.unicast_soc.send(MessageType.PAN_REQUEST, f"{str(self.uuid)},{self.ip},{self.port}", self.inm.ip, self.inm.port)
+        print(f"  [server.py] [Server.initialize_auction] Sent PAN_REQUEST request to INM (including IP and port)")
+
+    def request_pan(self, aan_data: str) -> None:
+        """
+        Handles the PAN_REQUEST request when the server is the INM.
+        Receives AAN's UUID, IP, and port.
+        """
+        aan_uuid, aan_ip, aan_port = aan_data.split(",")
+        print(
+            f"  [server.py] [Server.request_pan] Received PAN_REQUEST request from AAN {aan_uuid} ({aan_ip}:{aan_port})")
+
+        # 1. Select an Idle Node as PAN
+        pan_node = self.select_idle_node()
+
+        if pan_node is None:
+            print(f"  [server.py] [Server.request_pan] No idle nodes available for PAN.")
+            # Inform the AAN that no PAN could be assigned
+            self.unicast_soc.send(MessageType.PAN_FAILURE, "No idle nodes available", aan_ip, int(aan_port))
+            return
+
+        # 2. Inform the Chosen Node that it's the PAN
+        #    Include AAN's IP and port in the PAN_RESPONSE
+        pan_data = f"{aan_uuid},{aan_ip},{aan_port}"
+        self.unicast_soc.send(MessageType.PAN_RESPONSE, pan_data, pan_node.ip, pan_node.port)
+        print(
+            f"  [server.py] [Server.request_pan] Sent PAN_RESPONSE to PAN at {pan_node.ip}:{pan_node.port} (including AAN IP and port)")
+
+    def set_as_pan(self, pan_data: str) -> None:
+        """
+        Handles the PAN_RESPONSE message when the server is the chosen PAN.
+        """
+        aan_uuid, aan_ip, aan_port = pan_data.split(",")
+        print(f"  [server.py] [Server.set_as_pan] Designated as PAN for AAN {aan_uuid} ({aan_ip}:{aan_port})")
+        self.state = Server.State.PAN
+        # Store AAN information for potential future use
+        self.aan_node = Server.Node(aan_ip, int(aan_port), uuid.UUID(aan_uuid))
 
 
 # used for dummy testing

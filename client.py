@@ -40,6 +40,9 @@ class Client:
                 if action == "list":
                     self.list_items()
                 # ... (other actions)
+                if action == "start":
+                    item_id = input("Enter item ID to start auction: ")
+                    self.start_auction(item_id)
                 elif action == "exit":
                     print("Exiting client...")
                     exit()
@@ -90,5 +93,19 @@ class Client:
                         print(
                             f"Received unknown or invalid message: {response}"
                         )
+
+                elif response.message_type == MessageType.START_AUCTION_RESPONSE:
+                    if response.content.startswith("ERROR"):
+                        print(f"Failed to start auction: {response.content}")
+                    else:
+                        auction_id, aan_ip, aan_port = response.content.split(",")
+                        self.aan_address = (aan_ip, int(aan_port))
+                        print(f"Auction started with ID {auction_id}. AAN address: {aan_ip}:{aan_port}")
+
+    def start_auction(self, item_id: str = ""):
+        # broadcast the request to all servers
+        self.multicast_soc.send(MessageType.START_AUCTION_REQUEST, item_id)
+        print(f"Sent START_AUCTION_REQUEST for item {item_id} to INM")
+
 if __name__ == "__main__":
     myclient: Client = Client(5384)
