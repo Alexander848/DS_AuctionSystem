@@ -17,23 +17,26 @@ class MessageType(Enum):
     ELECTION_ACK = "ELECTION_ACK"       # acknowledges. ok/alive message.
     DECLARE_INM = "DECLARE_INM"         # declares the sender to be the INM. coordination message.
     INM_ANSWER = "INM_ANSWER"           # INM response to get INM address
+    UNICAST_ACK = "UNICAST_ACK"         # ack for unicast message
 
 
 class Message():
-    def __init__(self, message_type: MessageType = MessageType.TEST, content: str = "", src_ip: str = "-1", src_port: int = -1) -> None:
+    def __init__(self, message_type: MessageType = MessageType.TEST, content: str = "", src_ip: str = "-1", src_port: int = -1, message_id = -1) -> None:
         self.message_type : MessageType = message_type
         self.content: str = content
         self.src_ip: str = src_ip
         self.src_port: int = src_port
+        self.message_id: int = message_id
 
     def __str__(self) -> str:
-        return f"{self.message_type.value} {self.content} {self.src_ip} {self.src_port}"
+        return f"{self.message_type.value} {self.content} {self.src_ip} {self.src_port} {self.message_id}"
 
 
 def get_my_ip() -> str:
     # defaults to 127.0.0.1 for me. workaround: hardcode IP
     #return socket.gethostbyname(socket.gethostname())
-    return "192.168.2.103"     # override IP
+    #return "192.168.2.103"     # override IP
+    return "172.21.255.232" #alex wsl
 
 
 
