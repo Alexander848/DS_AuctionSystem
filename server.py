@@ -4,7 +4,7 @@
 # start auction
 # join auction
 # bid on item
-
+import json
 # server.py
 
 # every server:
@@ -54,6 +54,7 @@ class Server:
         IDLE = 2
         INM = 3
 
+
     class Node:
         """
         This class represents server nodes in the idle group.
@@ -76,6 +77,13 @@ class Server:
 
     def __init__(self, port=5384, set_uuid: int = -1) -> None:
         print("[server.py] [Server.__init__]")
+        # Simple item list (list of dictionaries)
+        self.item_data: list[dict] = [
+            {"itemID": 1, "itemname": "Master Sword", "price": 1000},
+            {"itemID": 2, "itemname": "Hylian Shield", "price": 500},
+            {"itemID": 3, "itemname": "Hookshot", "price": 300},
+            {"itemID": 4, "itemname": "Boomerang", "price": 200},
+        ]
         # we need to make sure the port is unique for each IP address. TODO: how?
         self.port: int = port
         self.ip: str = get_my_ip()
@@ -130,6 +138,11 @@ class Server:
         """
         print(f"  [server.py] [Server.__repr__] Server: {self.uuid=} {self.state.value=} {self.ip} {self.port}")
         return str(self)
+
+    def get_available_items_from_api(self) -> list[dict]:
+        # In a real scenario, you'd query an external API
+        # Here, we just return the simple item_data list
+        return self.item_data
 
     def collect_responses(self, timeout: float = 1.0) -> list[Message]:
         """
@@ -236,10 +249,40 @@ class Server:
             self.received_ack = False
         elif msg.message_type == MessageType.DECLARE_INM:
             print(f"    [server.py] [Server.message_parser] DECLARE_INM")
+            if msg.src_port != self.port:
+                self.state = Server.State.IDLE
+                print(f"    [server.py] [Server.message_parser] DECLARE_INM SERVER {self.port} back to IDLE")
             self.inm = Server.Node(msg.src_ip, msg.src_port, uuid.UUID(msg.content))
             print(f"    [server.py] [Server.message_parser] DECLARE_INM {self.inm}")
         elif msg.message_type == MessageType.TEST:
             print(f"    [server.py] [Server.message_parser] TEST_MESSAGE")
+        elif msg.message_type == MessageType.CONNECT_REQUEST:
+            if self.state == Server.State.INM:
+                print(f"    [server.py] [Server.message_parser] CONNECT_REQUEST")
+                self.unicast_soc.send(
+                    MessageType.CONNECT_RESPONSE,
+                    f"{self.ip}:{self.port}",  # Send INM's IP and port
+                    msg.src_ip,
+                    msg.src_port,
+                )
+        elif msg.message_type == MessageType.LIST_ITEMS_REQUEST:
+            if self.state == Server.State.INM:
+                print(f"    [server.py] [Server.message_parser] LIST_ITEMS_REQUEST")
+                # Query external API for available items
+                available_items = self.get_available_items_from_api()  # TODO Implement this
+                # Format the item list as a string
+                items_str = ""
+                for item in available_items:
+                    items_str += f"{item['itemID']},{item['itemname']},{item['price']};"
+                # Remove the trailing semicolon
+                items_str = items_str.rstrip(";").replace(" ","") # TODO has to be done this way because we split messages on space
+                # Send response to client
+                self.unicast_soc.send(
+                    MessageType.LIST_ITEMS_RESPONSE,
+                    items_str,
+                    msg.src_ip,
+                    5384,
+                )
         else:
             print("     [server.py] [Server.message_parser] ERROR: Unknown message")
 

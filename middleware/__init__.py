@@ -13,6 +13,10 @@ class MessageType(Enum):
     ELECTION_ACK = "ELECTION_ACK"       # acknowledges. ok/alive message.
     DECLARE_INM = "DECLARE_INM"         # declares the sender to be the INM. coordination message.
     INM_ANSWER = "INM_ANSWER"           # INM response to get INM address
+    LIST_ITEMS_REQUEST = "LIST_ITEMS_REQUEST"
+    LIST_ITEMS_RESPONSE = "LIST_ITEMS_RESPONSE"
+    CONNECT_REQUEST = "CONNECT_REQUEST"
+    CONNECT_RESPONSE = "CONNECT_RESPONSE"
 
 class Message():
     def __init__(self, message_type: MessageType = MessageType.TEST, content: str = "", src_ip: str = "-1", src_port: int = -1) -> None:
