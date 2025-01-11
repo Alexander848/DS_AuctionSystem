@@ -1,9 +1,7 @@
-
 import socket
 from middleware import MessageType
 from middleware import Message
 from middleware import get_my_ip
-
 
 class UnicastSocket(socket.socket):
     """
@@ -16,6 +14,7 @@ class UnicastSocket(socket.socket):
     """
 
     def __init__(self, port: int) -> None:
+        print("[middleware/unicast.py] [UnicastSocket.__init__]")
         self.ip = get_my_ip()
         self.port = port
 
@@ -33,28 +32,17 @@ class UnicastSocket(socket.socket):
         of messages. 
         We want at least FIFO channels -> logical timestamps/sequence numbers.
         """
+        print(f"  [middleware/unicast.py] [UnicastSocket.send] {message_type.value} {content} {target_ip} {target_port}")
         # TODO retries, deduplication/idempotency
         message: Message = Message(message_type, content, self.ip, self.port)
         target_addr: tuple = (target_ip, target_port)
         self.sendto(str(message).encode("utf-8"), target_addr)
 
     def receive(self, buffsize: int=1024) -> Message:
+        print(f"  [middleware/unicast.py] [UnicastSocket.receive]")
         raw: bytes = self.recv(buffsize)
         data: list[str] = raw.decode("utf-8").split(" ")
         message: Message = Message(MessageType(data[0]), data[1], data[2], int(data[3]))
+        print(f"  [middleware/unicast.py] [UnicastSocket.receive] {message}")
         # TODO send acknowledge back to src
         return message
-
-
-
-
-
-
-
-
-
-
-
-
-
-

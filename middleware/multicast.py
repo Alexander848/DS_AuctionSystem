@@ -1,4 +1,3 @@
-
 import socket
 from middleware import get_my_ip
 from middleware import Message
@@ -9,10 +8,10 @@ IDLE_GRP_IP = '224.1.1.1'
 IDLE_GRP_PORT = 5382
 MULTICAST_TTL = 2
 
-
 class MulticastSocket(socket.socket):
 
     def __init__(self, self_port, group_ip=IDLE_GRP_IP, group_port=IDLE_GRP_PORT, ttl=MULTICAST_TTL):
+        print("[middleware/multicast.py] [MulticastSocket.__init__]")
         # multicast
         self.group_ip = group_ip
         self.group_port = group_port
@@ -36,18 +35,13 @@ class MulticastSocket(socket.socket):
         Message consists of 4 parts separated by spaces: MessageType keyword,
         own UUID, ip address and port (to know where to send unicasts answers to).
         """
+        print(f"  [middleware/multicast.py] [MulticastSocket.send] {message_type.value} {content} {self.ip} {self.port}")
         message: str = f"{message_type.value} {content} {self.ip} {self.port}"
         self.sendto(message.encode("utf-8"), (self.group_ip, self.group_port))
 
     def receive(self, buffsize: int=1024) -> Message:
+        print(f"  [middleware/multicast.py] [MulticastSocket.receive]")
         raw, adrr = self.recvfrom(buffsize)
         data: list[str] = raw.decode("utf-8").split(" ")
+        print(f"  [middleware/multicast.py] [MulticastSocket.receive] {data}")
         return Message(MessageType(data[0]), data[1], data[2], int(data[3]))
-
-
-
-
-
-
-
-
