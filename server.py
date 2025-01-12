@@ -149,15 +149,34 @@ class Server:
     def print_info(self) -> None:
         """Prints the server's information to the console."""
         print(f"\n===== Server Info =====")
-        print(f"  UUID: {self.uuid}")
-        print(f"  State: {self.state.name}")
-        print(f"  IP: {self.ip}")
-        print(f"  Port: {self.port}")
+        print(f"UUID: {self.uuid}")
+        print(f"State: {self.state.name}")
+        print(f"IP: {self.ip}")
+        print(f"Port: {self.port}")
         if self.state == Server.State.AAN:
-            print(f"  Auction Item: {self.item_id}")
-            print(f"  Client: {self.client_address}")
+            print(f"  PAN: {self.pan_node.uuid} ({self.pan_node.ip}:{self.pan_node.port})")
+            if hasattr(self, 'item_id'):
+                print(f"    Auction Item: {self.item_id}")
+            if hasattr(self, 'highest_bid'):
+                print(f"    Highest Bid: {self.highest_bid}")
+            if hasattr(self, 'highest_bidder'):
+                print(f"    Highest Bidder: {self.highest_bidder}")
+            if hasattr(self, 'client_address'):
+                print(f"    Client: {self.client_address}")
+            if hasattr(self, 'clients'):
+                print(f"    Clients: {self.clients}")
         elif self.state == Server.State.PAN:
             print(f"  Assigned to AAN: {self.aan_node.uuid} ({self.aan_node.ip}:{self.aan_node.port})")
+            if hasattr(self, 'item_id'):
+                print(f"    Auction Item: {self.item_id}")
+            if hasattr(self, 'highest_bid'):
+                print(f"    Highest Bid: {self.highest_bid}")
+            if hasattr(self, 'highest_bidder'):
+                print(f"    Highest Bidder: {self.highest_bidder}")
+            if hasattr(self, 'client_address'):
+                print(f"    Client: {self.client_address}")
+            if hasattr(self, 'clients'):
+                print(f"    Clients: {self.clients}")
         print(f"=======================\n")
 
     def periodic_info_print(self) -> None:
@@ -330,6 +349,54 @@ class Server:
             if self.state == Server.State.IDLE:  # Only idle nodes can become PANs
                 print(f"    [server.py] [Server.message_parser] PAN_RESPONSE")
                 self.set_as_pan(msg.content)
+        elif msg.message_type == MessageType.PAN_INFO:
+            if self.state == Server.State.AAN:
+                print(f"    [server.py] [Server.message_parser] PAN_INFO")
+                # Store the PAN's information
+                pan_ip, pan_port, pan_uuid = msg.content.split(",")
+                self.pan_node = Server.Node(pan_ip, int(pan_port), uuid.UUID(pan_uuid))
+                print(f"    [server.py] [Server.message_parser] AAN received PAN information: {self.pan_node}")
+        elif msg.message_type == MessageType.JOIN_AUCTION_REQUEST:
+            if self.state == Server.State.AAN:
+                print(f"    [server.py] [Server.message_parser] JOIN_AUCTION_REQUEST")
+                item_id, client_uuid = msg.content.split(",")
+                # Only process if this AAN is responsible for the item_id
+                if item_id == self.item_id:
+                    self.join_auction(item_id, client_uuid, msg.src_ip, msg.src_port)
+        elif msg.message_type == MessageType.BID_REQUEST:
+            if self.state == Server.State.AAN:
+                print(f"    [server.py] [Server.message_parser] BID_REQUEST")
+                item_id, bid_amount, client_uuid = msg.content.split(",")
+                bid_amount = int(bid_amount)
+
+                if item_id == self.item_id and bid_amount > self.highest_bid:
+                    self.highest_bid = bid_amount
+                    self.highest_bidder = client_uuid
+                    self.replicate_state()  # Replicate the updated state to the PAN
+                    self.unicast_soc.send(MessageType.BID_RESPONSE, "Bid accepted", msg.src_ip, msg.src_port)
+                    print(
+                        f"    [server.py] [Server.message_parser] Accepted bid for item {item_id} from {client_uuid} for {bid_amount}")
+                else:
+                    self.unicast_soc.send(MessageType.BID_RESPONSE, "Bid rejected", msg.src_ip, msg.src_port)
+                    print(
+                        f"    [server.py] [Server.message_parser] Rejected bid for item {item_id} from {client_uuid} for {bid_amount}")
+        elif msg.message_type == MessageType.REPLICATE_STATE:
+            if self.state == Server.State.PAN:
+                print(f"    [server.py] [Server.message_parser] [PAN] REPLICATE_STATE ")
+                item_id, highest_bid, highest_bidder, client_list_str = msg.content.split(",", 3)
+                self.item_id = item_id
+                self.highest_bid = highest_bid
+                self.highest_bidder = highest_bidder if highest_bidder != "None" else None
+
+                # Update the client list
+                self.clients = []
+                if client_list_str:  # Check if the string is not empty
+                    for client_str in client_list_str.split(";"):
+                        client_ip, client_port, client_uuid = client_str.split(":")
+                        self.clients.append((client_ip, int(client_port), client_uuid))
+
+                print(
+                    f"    [server.py] [Server.message_parser] Updated PAN state: item_id={item_id}, highest_bid={self.highest_bid}, highest_bidder={self.highest_bidder}, clients={self.clients}")
         else:
             print("     [server.py] [Server.message_parser] ERROR: Unknown message")
 
@@ -404,11 +471,20 @@ class Server:
 
         # 1. Store Auction Information
         self.item_id = item_id
-        #self.starting_price = starting_price
-        #self.highest_bid =
-        #self.highest_bidder = None
+        self.clients = []
         self.client_address = (client_ip, client_port) # Store client address for communication
+        #self.clients.append(self.client_address)
+
         self.state = Server.State.AAN # Update the state to AAN
+
+        numeric_item_id = int(self.item_id) # Now storing as integer
+        self.highest_bid = 0
+        for item in self.item_data:
+            if item["itemID"] == numeric_item_id:
+                self.highest_bid = item["price"]
+                break
+
+        self.highest_bidder = None
 
         # 2. Request a PAN from INM
         self.unicast_soc.send(MessageType.PAN_REQUEST, f"{str(self.uuid)},{self.ip},{self.port}", self.inm.ip, self.inm.port)
@@ -439,6 +515,10 @@ class Server:
         print(
             f"  [server.py] [Server.request_pan] Sent PAN_RESPONSE to PAN at {pan_node.ip}:{pan_node.port} (including AAN IP and port)")
 
+        # 3. Send PAN_INFO message to AAN
+        self.unicast_soc.send(MessageType.PAN_INFO, f"{pan_node.ip},{pan_node.port},{pan_node.uuid}", aan_ip, int(aan_port))
+        print(f"  [server.py] [Server.request_pan] Sent PAN_INFO to AAN at {aan_ip}:{aan_port}")
+
     def set_as_pan(self, pan_data: str) -> None:
         """
         Handles the PAN_RESPONSE message when the server is the chosen PAN.
@@ -449,6 +529,36 @@ class Server:
         # Store AAN information for potential future use
         self.aan_node = Server.Node(aan_ip, int(aan_port), uuid.UUID(aan_uuid))
 
+    def join_auction(self, item_id: str, client_uuid: str, client_ip: str, client_port: int) -> None:
+        """
+        Handles a JOIN_AUCTION_REQUEST from a client.
+        """
+        print(f"  [server.py] [Server.join_auction] Received JOIN_AUCTION_REQUEST for item {item_id} from {client_ip}:{client_port}")
+
+        if item_id == self.item_id: # TODO: check if client already in? atm just gets added again but unproblematic
+            # Add the client to the list of clients
+            self.clients.append((client_ip, client_port, client_uuid))
+            # Replicate the updated state to the PAN
+            self.replicate_state()
+            # Send a success response to the client
+            # Send auction information to the client
+            auction_info = f"{self.item_id},{self.highest_bid},{self.highest_bidder}"
+            self.unicast_soc.send(MessageType.JOIN_AUCTION_RESPONSE, auction_info, client_ip, client_port)
+            print(
+                f"  [server.py] [Server.join_auction] Sent auction info to newly joined client {client_uuid}: {auction_info}")
+        else:
+            # Send a failure response to the client
+            self.unicast_soc.send(MessageType.JOIN_AUCTION_RESPONSE, "failed", client_ip, client_port)
+            print(f"  [server.py] [Server.join_auction] Client {client_uuid} failed to join auction for item {item_id}")
+
+    def replicate_state(self):
+        """Sends the current auction state to the PAN, including the client list."""
+        if self.state == Server.State.AAN:
+            # Convert the client list to a string representation
+            client_list_str = ";".join([f"{c[0]}:{c[1]}:{c[2]}" for c in self.clients])
+            message_content = f"{self.item_id},{self.highest_bid},{self.highest_bidder},{client_list_str}"
+            self.unicast_soc.send(MessageType.REPLICATE_STATE, message_content, self.pan_node.ip, self.pan_node.port)
+            print(f"  [server.py] [Server.replicate_state] Replicated state to PAN: {message_content}")
 
 # used for dummy testing
 if __name__ == "__main__":
