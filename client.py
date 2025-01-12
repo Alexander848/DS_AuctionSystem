@@ -89,18 +89,19 @@ class Client:
                                 f"{item['itemID']:<2} | {item['itemname']:<16} | {item['price']}"
                             )
                         print("-----------------")
+                    elif response.message_type == MessageType.START_AUCTION_RESPONSE:
+                        if response.content.startswith("ERROR"):
+                            print(f"Failed to start auction: {response.content}")
+                        else:
+                            aan_ip, aan_port = response.content.split(",")
+                            self.aan_address = (aan_ip, int(aan_port))
+                            print(f"Auction started. AAN address: {aan_ip}:{aan_port}")
                     else:
                         print(
                             f"Received unknown or invalid message: {response}"
                         )
 
-                elif response.message_type == MessageType.START_AUCTION_RESPONSE:
-                    if response.content.startswith("ERROR"):
-                        print(f"Failed to start auction: {response.content}")
-                    else:
-                        auction_id, aan_ip, aan_port = response.content.split(",")
-                        self.aan_address = (aan_ip, int(aan_port))
-                        print(f"Auction started with ID {auction_id}. AAN address: {aan_ip}:{aan_port}")
+
 
     def start_auction(self, item_id: str = ""):
         # broadcast the request to all servers

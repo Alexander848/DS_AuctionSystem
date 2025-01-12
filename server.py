@@ -344,7 +344,7 @@ class Server:
 
         if aan_node is None:
             print(f"  [server.py] [Server.start_auction] No idle nodes available.")
-            self.unicast_soc.send(MessageType.START_AUCTION_RESPONSE, "ERROR: No idle nodes available", client_ip, client_port)
+            self.unicast_soc.send(MessageType.START_AUCTION_RESPONSE, "ERROR:Noidlenodesavailable", client_ip, client_port)
             return
         print(f"  [server.py] [Server.start_auction] Selected {aan_node} as AAN")
         # 2. Inform the Chosen Node that it's the AAN
