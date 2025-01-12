@@ -5,6 +5,7 @@
 # join auction
 # bid on item
 import json
+import threading
 # server.py
 
 # every server:
@@ -165,6 +166,8 @@ class Server:
                 print(f"    Client: {self.client_address}")
             if hasattr(self, 'clients'):
                 print(f"    Clients: {self.clients}")
+            if hasattr(self, 'auction_timer'):
+                print(f"    Time left: {int(self.auction_end_time - time.time())}")
         elif self.state == Server.State.PAN:
             print(f"  Assigned to AAN: {self.aan_node.uuid} ({self.aan_node.ip}:{self.aan_node.port})")
             if hasattr(self, 'item_id'):
@@ -356,7 +359,7 @@ class Server:
                 pan_ip, pan_port, pan_uuid = msg.content.split(",")
                 self.pan_node = Server.Node(pan_ip, int(pan_port), uuid.UUID(pan_uuid))
                 print(f"    [server.py] [Server.message_parser] AAN received PAN information: {self.pan_node}")
-        elif msg.message_type == MessageType.JOIN_AUCTION_REQUEST:
+        elif msg.message_type == MessageType.JOIN_AUCTION_REQUEST: # TODO: respond to client when no auction is active
             if self.state == Server.State.AAN:
                 print(f"    [server.py] [Server.message_parser] JOIN_AUCTION_REQUEST")
                 item_id, client_uuid = msg.content.split(",")
@@ -369,18 +372,23 @@ class Server:
                 item_id, bid_amount, client_uuid = msg.content.split(",")
                 bid_amount = int(bid_amount)
 
+                # Add remaining time to BID_RESPONSE
+                remaining_time = int(self.auction_end_time - time.time()) # Convert to integer
+                if remaining_time < 0:  # Ensure remaining_time is not negative
+                    remaining_time = 0
+
                 if item_id == self.item_id and bid_amount > int(self.highest_bid):
                     self.highest_bid = bid_amount
                     self.highest_bidder = client_uuid
                     self.replicate_state()  # Replicate the updated state to the PAN
                     self.unicast_soc.send(MessageType.BID_RESPONSE,
-                                          f"Bid-for-{item_id}-accepted-for-amount-{bid_amount}", msg.src_ip,
-                                          msg.src_port)  # Updated message format
+                                          f"Bid-for-{item_id}-accepted-for-amount-{bid_amount}-timeleft-{remaining_time}", msg.src_ip,
+                                          msg.src_port)
                     print(
-                        f"    [server.py] [Server.message_parser] Accepted bid for item {item_id} from {client_uuid} for bid_amount{bid_amount}")
+                        f"    [server.py] [Server.message_parser] Accepted bid for item {item_id} from {client_uuid} for bid_amount {bid_amount}")
                 else:
                     self.unicast_soc.send(MessageType.BID_RESPONSE,
-                                          f"Bid-for-{item_id}-for-{bid_amount}-rejected-because-smaller-than-highest_bid-{self.highest_bid}",
+                                          f"Bid-for-{item_id}-for-{bid_amount}-rejected-because-smaller-than-highest_bid-{self.highest_bid}-timeleft-{remaining_time}",
                                           msg.src_ip, msg.src_port)
                     print(
                         f"    [server.py] [Server.message_parser] Rejected bid for item {item_id} from {client_uuid} for {bid_amount}")
@@ -401,6 +409,10 @@ class Server:
 
                 print(
                     f"    [server.py] [Server.message_parser] Updated PAN state: item_id={item_id}, highest_bid={self.highest_bid}, highest_bidder={self.highest_bidder}, clients={self.clients}")
+        elif msg.message_type == MessageType.AUCTION_END:
+            if self.state == Server.State.PAN:
+                print(f"    [server.py] [Server.message_parser] [PAN] AUCTION_END ")
+                self.return_to_idle()
         else:
             print("     [server.py] [Server.message_parser] ERROR: Unknown message")
 
@@ -494,6 +506,13 @@ class Server:
         self.unicast_soc.send(MessageType.PAN_REQUEST, f"{str(self.uuid)},{self.ip},{self.port}", self.inm.ip, self.inm.port)
         print(f"  [server.py] [Server.initialize_auction] Sent PAN_REQUEST request to INM (including IP and port)")
 
+        # Start auction timer (20 seconds)
+
+        self.auction_end_time = time.time() + 20
+        self.auction_timer = threading.Timer(20, self.finalize_auction)
+        self.auction_timer.start()
+        print(f"  [server.py] [Server.initialize_auction] Starting auction timer {20} seconds from now at {self.auction_end_time}")
+
     def request_pan(self, aan_data: str) -> None:
         """
         Handles the PAN_REQUEST request when the server is the INM.
@@ -563,6 +582,38 @@ class Server:
             message_content = f"{self.item_id},{self.highest_bid},{self.highest_bidder},{client_list_str}"
             self.unicast_soc.send(MessageType.REPLICATE_STATE, message_content, self.pan_node.ip, self.pan_node.port)
             print(f"  [server.py] [Server.replicate_state] Replicated state to PAN: {message_content}")
+
+    def return_to_idle(self):
+        """Resets the server to the IDLE state and clears auction-related data."""
+        print(f"  [server.py] [Server.return_to_idle] Server {self.uuid} returning to IDLE")
+        self.state = Server.State.IDLE
+
+        # Clear auction data
+        self.item_id = None
+        self.clients = []
+        self.client_address = None
+        self.highest_bid = None
+        self.highest_bidder = None
+
+        if self.pan_node:  # This was an AAN
+            self.pan_node = None
+        elif self.aan_node:  # This was a PAN
+            self.aan_node = None
+
+    def finalize_auction(self):
+        print(f"  [server.py] [Server.finalize_auction] Finalizing auction for item {self.item_id}")
+
+        # 1. Inform Clients (Detailed AUCTION_END)
+        for client_ip, client_port, client_uuid in self.clients:
+            message = f"{self.item_id},{self.highest_bid},{self.highest_bidder if self.highest_bidder else 'None'},{'Winner' if self.highest_bidder == client_uuid else 'Loser'}"
+            self.unicast_soc.send(MessageType.AUCTION_END, message, client_ip, client_port)
+
+        # 2. Inform PAN
+        if self.pan_node:
+            self.unicast_soc.send(MessageType.AUCTION_END, "", self.pan_node.ip, self.pan_node.port)
+
+        # 3. Reset AAN State
+        self.return_to_idle()
 
 # used for dummy testing
 if __name__ == "__main__":

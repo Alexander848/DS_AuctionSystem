@@ -147,24 +147,38 @@ class Client:
                             if len(parts) == 7:  # Bid accepted (Corrected length check)
                                 item_id = parts[2]
                                 bid_amount = parts[6]
+                                remaining_time = parts[8]
 
                                 # Update joined_auctions with new bid information
                                 if item_id in self.joined_auctions:
                                     self.joined_auctions[item_id]["highest_bid"] = bid_amount
                                     self.joined_auctions[item_id]["highest_bidder"] = str(self.uuid)
                                     print(
-                                        f"Bid for {item_id} accepted. New highest bid: {bid_amount} by you"
+                                        f"Bid for {item_id} accepted. New highest bid: {bid_amount} by you. Time left: {remaining_time} seconds"
                                     )
                             elif len(parts) == 11:  # Bid rejected (Corrected length check)
                                 item_id = parts[2]
                                 bid_amount = parts[4]
                                 highest_bid = parts[10]
+                                remaining_time = parts[12]
+
                                 # Update joined_auctions with new bid information
                                 self.joined_auctions[item_id]["highest_bid"] = highest_bid
                                 self.joined_auctions[item_id]["highest_bidder"] = "another client"
                                 print(
-                                        f"Bid for {item_id} for {bid_amount} rejected. Current highest bid: {highest_bid} by another client"
-                                    )
+                                    f"Bid for {item_id} for {bid_amount} rejected. Current highest bid: {highest_bid} by another client. Time left: {remaining_time} seconds"
+                                )
+                    elif response.message_type == MessageType.AUCTION_END:
+                        print(f"Auction end response: {response.content}")
+                        item_id, highest_bid, highest_bidder, result = response.content.split(",")
+                        print(f"Auction for item {item_id} has ended.")
+                        print(f"  Highest Bid: {highest_bid}")
+                        print(f"  Highest Bidder: {highest_bidder}")
+                        print(f"  Result: {result}")
+
+                        # Remove the auction from joined_auctions
+                        if item_id in self.joined_auctions:
+                            del self.joined_auctions[item_id]
                     else:
                         print(
                             f"Received unknown or invalid message: {response}"
