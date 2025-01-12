@@ -369,15 +369,19 @@ class Server:
                 item_id, bid_amount, client_uuid = msg.content.split(",")
                 bid_amount = int(bid_amount)
 
-                if item_id == self.item_id and bid_amount > self.highest_bid:
+                if item_id == self.item_id and bid_amount > int(self.highest_bid):
                     self.highest_bid = bid_amount
                     self.highest_bidder = client_uuid
                     self.replicate_state()  # Replicate the updated state to the PAN
-                    self.unicast_soc.send(MessageType.BID_RESPONSE, "Bid accepted", msg.src_ip, msg.src_port)
+                    self.unicast_soc.send(MessageType.BID_RESPONSE,
+                                          f"Bid-for-{item_id}-accepted-for-amount-{bid_amount}", msg.src_ip,
+                                          msg.src_port)  # Updated message format
                     print(
-                        f"    [server.py] [Server.message_parser] Accepted bid for item {item_id} from {client_uuid} for {bid_amount}")
+                        f"    [server.py] [Server.message_parser] Accepted bid for item {item_id} from {client_uuid} for bid_amount{bid_amount}")
                 else:
-                    self.unicast_soc.send(MessageType.BID_RESPONSE, "Bid rejected", msg.src_ip, msg.src_port)
+                    self.unicast_soc.send(MessageType.BID_RESPONSE,
+                                          f"Bid-for-{item_id}-for-{bid_amount}-rejected-because-smaller-than-highest_bid-{self.highest_bid}",
+                                          msg.src_ip, msg.src_port)
                     print(
                         f"    [server.py] [Server.message_parser] Rejected bid for item {item_id} from {client_uuid} for {bid_amount}")
         elif msg.message_type == MessageType.REPLICATE_STATE:

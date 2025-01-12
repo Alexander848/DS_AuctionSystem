@@ -33,7 +33,7 @@ class Client:
     def cli(self):
         while True:
             # removed connect from input
-            command = input("Enter command (info, list, start <item_id>, join <item_id>, bid, exit): ")
+            command = input("Enter command (info, list, start <item_id>, join <item_id>, bid <item_id> <amount>, exit): ")
             command_parts = command.split()
 
             if command_parts:
@@ -59,6 +59,18 @@ class Client:
                         self.join_auction(item_id)
                     else:
                         print("Invalid join command. Usage: join <item_id>")
+                    break
+                if action == "bid":
+                    if len(command_parts) == 3:
+                        item_id = command_parts[1]
+                        try:
+                            bid_amount = int(command_parts[2])
+                        except ValueError:
+                            print("Invalid bid amount. Usage: bid <item_id> <amount>")
+                            break
+                        self.place_bid(item_id, bid_amount)
+                    else:
+                        print("Invalid bid command. Usage: bid <item_id> <amount>")
                     break
                 elif action == "exit":
                     print("Exiting client...")
@@ -128,6 +140,31 @@ class Client:
                             print(
                                 f"  Current highest bid: {highest_bid} (by {highest_bidder if highest_bidder != 'None' else 'no one'})"
                                 )
+                    elif response.message_type == MessageType.BID_RESPONSE: # this handling is terrible but no other way because of message format
+                        print(f"Bid response: {response.content}")
+                        if response.content.startswith("Bid-for"):
+                            parts = response.content.split("-")
+                            if len(parts) == 7:  # Bid accepted (Corrected length check)
+                                item_id = parts[2]
+                                bid_amount = parts[6]
+
+                                # Update joined_auctions with new bid information
+                                if item_id in self.joined_auctions:
+                                    self.joined_auctions[item_id]["highest_bid"] = bid_amount
+                                    self.joined_auctions[item_id]["highest_bidder"] = str(self.uuid)
+                                    print(
+                                        f"Bid for {item_id} accepted. New highest bid: {bid_amount} by you"
+                                    )
+                            elif len(parts) == 11:  # Bid rejected (Corrected length check)
+                                item_id = parts[2]
+                                bid_amount = parts[4]
+                                highest_bid = parts[10]
+                                # Update joined_auctions with new bid information
+                                self.joined_auctions[item_id]["highest_bid"] = highest_bid
+                                self.joined_auctions[item_id]["highest_bidder"] = "another client"
+                                print(
+                                        f"Bid for {item_id} for {bid_amount} rejected. Current highest bid: {highest_bid} by another client"
+                                    )
                     else:
                         print(
                             f"Received unknown or invalid message: {response}"
@@ -140,7 +177,8 @@ class Client:
         print(f"IP: {self.ip}")
         print(f"Port: {self.port}")
 
-        if hasattr(self, 'self.aan_address'):
+        # Check if AAN address is available and display it
+        if hasattr(self, 'aan_address') and self.aan_address[1] != -1:
             print(f"AAN Address: {self.aan_address[0]}:{self.aan_address[1]}")
         else:
             print("AAN Address: None")
@@ -174,6 +212,18 @@ class Client:
         self.multicast_soc.send(MessageType.JOIN_AUCTION_REQUEST, message_content)  # Use multicast
         # #self.unicast_soc.send(MessageType.JOIN_AUCTION_REQUEST, message_content, self.aan_address[0], self.aan_address[1])
         print(f"Sent JOIN_AUCTION_REQUEST for item {item_id} to AAN")
+
+    def place_bid(self, item_id: str, bid_amount: int):
+        """
+        Sends a BID_REQUEST to the AAN.
+        """
+        if item_id not in self.joined_auctions:
+            print(f"You have not joined the auction for item {item_id}.")
+            return
+
+        message_content = f"{item_id},{bid_amount},{self.uuid}"
+        self.unicast_soc.send(MessageType.BID_REQUEST, message_content, self.aan_address[0], self.aan_address[1])
+        print(f"Sent BID_REQUEST for item {item_id} with amount {bid_amount} to AAN")
 
 if __name__ == "__main__":
     #myclient: Client = Client(5384)

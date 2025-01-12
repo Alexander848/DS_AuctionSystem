@@ -31,6 +31,7 @@ class MessageType(Enum):
     BID_REQUEST = "BID_REQUEST"
     BID_RESPONSE = "BID_RESPONSE"
     PAN_INFO = "PAN_INFO"
+    LIST_ITEMS_FROM_AAN_REQUEST = "LIST_ITEMS_FROM_AAN_REQUEST"
 
 class Message():
     def __init__(self, message_type: MessageType = MessageType.TEST, content: str = "", src_ip: str = "-1", src_port: int = -1) -> None:
