@@ -34,16 +34,20 @@ class MessageType(Enum):
     PAN_INFO = "PAN_INFO"
     LIST_ITEMS_FROM_AAN_REQUEST = "LIST_ITEMS_FROM_AAN_REQUEST"
     AUCTION_END = "AUCTION_END"
+    HEARTBEAT_REQUEST = "HEARTBEAT_REQUEST"
+    HEARTBEAT_RESPONSE = "HEARTBEAT_RESPONSE"
+
+
 class Message():
     def __init__(self, message_type: MessageType = MessageType.TEST, content: str = "", src_ip: str = "-1", src_port: int = -1) -> None:
-        print("[middleware/init.py] [Message.__init__]")
+        #print("[middleware/init.py] [Message.__init__]")
         self.message_type : MessageType = message_type
         self.content: str = content
         self.src_ip: str = src_ip
         self.src_port: int = src_port
 
     def __str__(self) -> str:
-        print(f"  [middleware/init.py] [Message.__str__] {self.message_type.value} {self.content} {self.src_ip} {self.src_port}")
+        #print(f"  [middleware/init.py] [Message.__str__] {self.message_type.value} {self.content} {self.src_ip} {self.src_port}")
         return f"{self.message_type.value} {self.content} {self.src_ip} {self.src_port}"
 
 def get_my_ip() -> str:

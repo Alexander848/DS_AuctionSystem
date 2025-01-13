@@ -69,13 +69,14 @@ class Server:
             self.ip: str = _ip
             self.port: int = _port
             self.uuid: uuid.UUID = _uuid
+            self.last_heartbeat = time.time()
 
         def __str__(self) -> str:
-            print(f"  [server.py] [Server.Node.__str__] ({self.ip} {self.port} {self.uuid})")
+            #print(f"  [server.py] [Server.Node.__str__] ({self.ip} {self.port} {self.uuid})")
             return f"({self.ip} {self.port} {self.uuid})"
 
         def __repr__(self) -> str:
-            print(f"  [server.py] [Server.Node.__repr__] ({self.ip} {self.port} {self.uuid})")
+            #print(f"  [server.py] [Server.Node.__repr__] ({self.ip} {self.port} {self.uuid})")
             return str(self)
 
     def __init__(self, port=5384, set_uuid: int = -1) -> None:
@@ -110,6 +111,17 @@ class Server:
         self.info_thread.daemon = True  # Allow the main thread to exit even if this thread is running
         self.info_thread.start()
 
+        # Heartbeat threads and events
+        self.heartbeat_threads: list[Thread] = []
+        self.inm_to_idle_event: threading.Event = threading.Event()
+        self.idle_to_inm_event: threading.Event = threading.Event()
+        self.aan_to_pan_event: threading.Event = threading.Event()
+        self.pan_to_aan_event: threading.Event = threading.Event()
+
+        # Heartbeat constants
+        self.HEARTBEAT_INTERVAL = 10  # Example: 5 seconds
+        self.HEARTBEAT_TIMEOUT = 2 * self.HEARTBEAT_INTERVAL
+
         self.main()
 
     def main(self) -> None:
@@ -123,6 +135,8 @@ class Server:
         # causes election to start in message_parser
         self.unicast_soc.send(MessageType.ELECTION_START, str(self.uuid), self.ip, self.port)
         self.state = Server.State.IDLE
+        self.start_heartbeat_threads()
+
         # main loop
         while True:
             self.message_parser()
@@ -134,7 +148,7 @@ class Server:
         the memory address of the object.
         example: print(str(self))
         """
-        print(f"  [server.py] [Server.__str__] Server: {self.uuid=} {self.state.value=} {self.ip} {self.port}")
+        #print(f"  [server.py] [Server.__str__] Server: {self.uuid=} {self.state.value=} {self.ip} {self.port}")
         return f"Server: {self.uuid=} {self.state.value=} {self.ip} {self.port}"
 
     def __repr__(self) -> str:
@@ -144,7 +158,7 @@ class Server:
         get rid of the explicit str() type conversion.
         example: print(self)
         """
-        print(f"  [server.py] [Server.__repr__] Server: {self.uuid=} {self.state.value=} {self.ip} {self.port}")
+        #print(f"  [server.py] [Server.__repr__] Server: {self.uuid=} {self.state.value=} {self.ip} {self.port}")
         return str(self)
 
     def print_info(self) -> None:
@@ -154,6 +168,7 @@ class Server:
         print(f"State: {self.state.name}")
         print(f"IP: {self.ip}")
         print(f"Port: {self.port}")
+        print(f"Groupview: {self.groupview}")
         if self.state == Server.State.AAN:
             print(f"  PAN: {self.pan_node.uuid} ({self.pan_node.ip}:{self.pan_node.port})")
             if hasattr(self, 'item_id'):
@@ -266,7 +281,10 @@ class Server:
             print(f"  [server.py] [Server.declare_inm] received ack")
             return
         print(f"  [server.py] [Server.declare_inm] declaring itself inm")
+
+        self.stop_all_heartbeat_threads()
         self.state = Server.State.INM
+        self.start_heartbeat_threads()
         self.idle_grp_sock.send(MessageType.DECLARE_INM, str(self.uuid))
 
     def message_parser(self) -> None:
@@ -299,7 +317,9 @@ class Server:
         elif msg.message_type == MessageType.DECLARE_INM:
             print(f"    [server.py] [Server.message_parser] DECLARE_INM")
             if msg.src_port != self.port:
+                self.stop_all_heartbeat_threads()
                 self.state = Server.State.IDLE
+                self.start_heartbeat_threads()
                 print(f"    [server.py] [Server.message_parser] DECLARE_INM SERVER {self.port} back to IDLE")
             self.inm = Server.Node(msg.src_ip, msg.src_port, uuid.UUID(msg.content))
             print(f"    [server.py] [Server.message_parser] DECLARE_INM {self.inm}")
@@ -327,7 +347,8 @@ class Server:
                 for item in available_items:
                     items_str += f"{item['itemID']},{item['itemname']},{item['price']};"
                 # Remove the trailing semicolon
-                items_str = items_str.rstrip(";").replace(" ","") # TODO has to be done this way because we split messages on space
+                items_str = items_str.rstrip(";").replace(" ",
+                                                          "")  # TODO has to be done this way because we split messages on space
                 # Send response to client
                 self.unicast_soc.send(
                     MessageType.LIST_ITEMS_RESPONSE,
@@ -359,7 +380,7 @@ class Server:
                 pan_ip, pan_port, pan_uuid = msg.content.split(",")
                 self.pan_node = Server.Node(pan_ip, int(pan_port), uuid.UUID(pan_uuid))
                 print(f"    [server.py] [Server.message_parser] AAN received PAN information: {self.pan_node}")
-        elif msg.message_type == MessageType.JOIN_AUCTION_REQUEST: # TODO: respond to client when no auction is active
+        elif msg.message_type == MessageType.JOIN_AUCTION_REQUEST:  # TODO: respond to client when no auction is active
             if self.state == Server.State.AAN:
                 print(f"    [server.py] [Server.message_parser] JOIN_AUCTION_REQUEST")
                 item_id, client_uuid = msg.content.split(",")
@@ -373,7 +394,7 @@ class Server:
                 bid_amount = int(bid_amount)
 
                 # Add remaining time to BID_RESPONSE
-                remaining_time = int(self.auction_end_time - time.time()) # Convert to integer
+                remaining_time = int(self.auction_end_time - time.time())  # Convert to integer
                 if remaining_time < 0:  # Ensure remaining_time is not negative
                     remaining_time = 0
 
@@ -382,7 +403,8 @@ class Server:
                     self.highest_bidder = client_uuid
                     self.replicate_state()  # Replicate the updated state to the PAN
                     self.unicast_soc.send(MessageType.BID_RESPONSE,
-                                          f"Bid-for-{item_id}-accepted-for-amount-{bid_amount}-timeleft-{remaining_time}", msg.src_ip,
+                                          f"Bid-for-{item_id}-accepted-for-amount-{bid_amount}-timeleft-{remaining_time}",
+                                          msg.src_ip,
                                           msg.src_port)
                     print(
                         f"    [server.py] [Server.message_parser] Accepted bid for item {item_id} from {client_uuid} for bid_amount {bid_amount}")
@@ -413,6 +435,29 @@ class Server:
             if self.state == Server.State.PAN:
                 print(f"    [server.py] [Server.message_parser] [PAN] AUCTION_END ")
                 self.return_to_idle()
+        elif msg.message_type == MessageType.HEARTBEAT_REQUEST:
+            print(f"    [server.py] [Server.message_parser] HEARTBEAT_REQUEST")
+            self.unicast_soc.send(MessageType.HEARTBEAT_RESPONSE, str(self.uuid), msg.src_ip, msg.src_port)
+            if self.state == Server.State.IDLE and self.inm:
+                self.inm.last_heartbeat = time.time()
+            elif self.state == Server.State.AAN and self.pan_node:
+                self.pan_node.last_heartbeat = time.time()
+            elif self.state == Server.State.PAN and self.aan_node:
+                self.aan_node.last_heartbeat = time.time()
+        elif msg.message_type == MessageType.HEARTBEAT_RESPONSE:
+            print(f"    [server.py] [Server.message_parser] HEARTBEAT_RESPONSE")
+            # Update the last_heartbeat timestamp of the sender
+            if self.state == Server.State.INM:
+                for node in self.groupview:
+                    if node.ip == msg.src_ip and node.port == msg.src_port:
+                        node.last_heartbeat = time.time()
+                        break
+            elif self.state == Server.State.IDLE and self.inm and self.inm.ip == msg.src_ip and self.inm.port == msg.src_port:
+                self.inm.last_heartbeat = time.time()
+            elif self.state == Server.State.AAN and self.pan_node and self.pan_node.ip == msg.src_ip and self.pan_node.port == msg.src_port:
+                self.pan_node.last_heartbeat = time.time()
+            elif self.state == Server.State.PAN and self.aan_node and self.aan_node.ip == msg.src_ip and self.aan_node.port == msg.src_port:
+                self.aan_node.last_heartbeat = time.time()
         else:
             print("     [server.py] [Server.message_parser] ERROR: Unknown message")
 
@@ -484,16 +529,17 @@ class Server:
 
         """
         print(f"  [server.py] [Server.initialize_auction] Initializing auction for item '{item_id}'")
+        self.stop_all_heartbeat_threads()
 
         # 1. Store Auction Information
         self.item_id = item_id
         self.clients = []
-        self.client_address = (client_ip, client_port) # Store client address for communication
-        #self.clients.append(self.client_address)
+        self.client_address = (client_ip, client_port)  # Store client address for communication
+        # self.clients.append(self.client_address)
 
-        self.state = Server.State.AAN # Update the state to AAN
+        self.state = Server.State.AAN  # Update the state to AAN
 
-        numeric_item_id = int(self.item_id) # Now storing as integer
+        numeric_item_id = int(self.item_id)  # Now storing as integer
         self.highest_bid = 0
         for item in self.item_data:
             if item["itemID"] == numeric_item_id:
@@ -503,7 +549,8 @@ class Server:
         self.highest_bidder = None
 
         # 2. Request a PAN from INM
-        self.unicast_soc.send(MessageType.PAN_REQUEST, f"{str(self.uuid)},{self.ip},{self.port}", self.inm.ip, self.inm.port)
+        self.unicast_soc.send(MessageType.PAN_REQUEST, f"{str(self.uuid)},{self.ip},{self.port}", self.inm.ip,
+                              self.inm.port)
         print(f"  [server.py] [Server.initialize_auction] Sent PAN_REQUEST request to INM (including IP and port)")
 
         # Start auction timer (20 seconds)
@@ -511,7 +558,9 @@ class Server:
         self.auction_end_time = time.time() + 20
         self.auction_timer = threading.Timer(20, self.finalize_auction)
         self.auction_timer.start()
-        print(f"  [server.py] [Server.initialize_auction] Starting auction timer {20} seconds from now at {self.auction_end_time}")
+        print(
+            f"  [server.py] [Server.initialize_auction] Starting auction timer {20} seconds from now at {self.auction_end_time}")
+        self.start_heartbeat_threads()
 
     def request_pan(self, aan_data: str) -> None:
         """
@@ -548,9 +597,11 @@ class Server:
         """
         aan_uuid, aan_ip, aan_port = pan_data.split(",")
         print(f"  [server.py] [Server.set_as_pan] Designated as PAN for AAN {aan_uuid} ({aan_ip}:{aan_port})")
+        self.stop_all_heartbeat_threads()
         self.state = Server.State.PAN
         # Store AAN information for potential future use
         self.aan_node = Server.Node(aan_ip, int(aan_port), uuid.UUID(aan_uuid))
+        self.start_heartbeat_threads()
 
     def join_auction(self, item_id: str, client_uuid: str, client_ip: str, client_port: int) -> None:
         """
@@ -586,6 +637,7 @@ class Server:
     def return_to_idle(self):
         """Resets the server to the IDLE state and clears auction-related data."""
         print(f"  [server.py] [Server.return_to_idle] Server {self.uuid} returning to IDLE")
+        self.stop_all_heartbeat_threads()
         self.state = Server.State.IDLE
 
         # Clear auction data
@@ -599,6 +651,7 @@ class Server:
             self.pan_node = None
         elif self.aan_node:  # This was a PAN
             self.aan_node = None
+        self.start_heartbeat_threads()
 
     def finalize_auction(self):
         print(f"  [server.py] [Server.finalize_auction] Finalizing auction for item {self.item_id}")
@@ -615,6 +668,142 @@ class Server:
         # 3. Reset AAN State
         self.return_to_idle()
 
+    def start_heartbeat_threads(self):
+        """Starts the correct heartbeat thread based on the server's state."""
+        print(f"  [server.py] [Server.start_heartbeat_threads] Starting heartbeat threads for state: {self.state.name}")
+
+        # Stop any running threads that are no longer needed
+        self.stop_all_heartbeat_threads()
+
+        if self.state == Server.State.INM:
+            self.inm_to_idle_event.clear()  # Reset the event
+            inm_to_idle_thread = Thread(target=self.send_heartbeats_to_idle_nodes)
+            inm_to_idle_thread.daemon = True
+            inm_to_idle_thread.start()
+            self.heartbeat_threads.append(inm_to_idle_thread)
+        elif self.state == Server.State.IDLE:
+            self.idle_to_inm_event.clear()  # Reset the event
+            idle_to_inm_thread = Thread(target=self.send_heartbeats_to_inm)
+            idle_to_inm_thread.daemon = True
+            idle_to_inm_thread.start()
+            self.heartbeat_threads.append(idle_to_inm_thread)
+        elif self.state == Server.State.AAN:
+            self.aan_to_pan_event.clear()  # Reset the event
+            aan_to_pan_thread = Thread(target=self.send_heartbeats_to_pan)
+            aan_to_pan_thread.daemon = True
+            aan_to_pan_thread.start()
+            self.heartbeat_threads.append(aan_to_pan_thread)
+        elif self.state == Server.State.PAN:
+            self.pan_to_aan_event.clear()  # Reset the event
+            pan_to_aan_thread = Thread(target=self.send_heartbeats_to_aan)
+            pan_to_aan_thread.daemon = True
+            pan_to_aan_thread.start()
+            self.heartbeat_threads.append(pan_to_aan_thread)
+
+    def stop_all_heartbeat_threads(self):
+        """Stops all running heartbeat threads by setting their events."""
+        print(f"  [server.py] [Server.stop_all_heartbeat_threads] Stopping all heartbeat threads")
+        self.inm_to_idle_event.set()
+        self.idle_to_inm_event.set()
+        self.aan_to_pan_event.set()
+        self.pan_to_aan_event.set()
+
+        # Wait for threads to terminate gracefully
+        for thread in self.heartbeat_threads:
+            if thread.is_alive():
+                thread.join()
+        self.heartbeat_threads.clear()
+
+    def send_heartbeats_to_idle_nodes(self):
+        """Thread for INM to send heartbeats to idle nodes."""
+        while not self.inm_to_idle_event.is_set() and self.state == Server.State.INM:
+            nodes_to_remove = set()  # Create an empty set to track nodes to be removed
+            for node in self.groupview.copy():  # Iterate over a copy of the set
+                if node.uuid != self.uuid:  # Skip the INM itself
+                    self.unicast_soc.send(MessageType.HEARTBEAT_REQUEST, str(self.uuid), node.ip, node.port)
+                    if time.time() - node.last_heartbeat > self.HEARTBEAT_TIMEOUT:
+                        print(
+                            f"  [server.py] [Server.send_heartbeats_to_idle_nodes] Heartbeat timeout for node {node.uuid}")
+                        # Handle potential failure (e.g., add to suspect list, remove from groupview after several timeouts)
+                        nodes_to_remove.add(node)
+                        print(
+                            f"  [server.py] [Server.send_heartbeats_to_idle_nodes] Marked node {node.uuid} for removal")
+
+            # Remove the marked nodes after the iteration
+            for node in nodes_to_remove:
+                if node in self.groupview:  # Double check to avoid KeyError
+                    self.groupview.remove(node)
+                    print(
+                        f"  [server.py] [Server.send_heartbeats_to_idle_nodes] Removed node {node.uuid} from groupview")
+            time.sleep(self.HEARTBEAT_INTERVAL)
+
+    def send_heartbeats_to_inm(self):
+        """Thread for idle nodes to send heartbeats to INM."""
+        while not self.idle_to_inm_event.is_set() and self.state == Server.State.IDLE:
+            if self.inm:
+                self.unicast_soc.send(MessageType.HEARTBEAT_REQUEST, str(self.uuid), self.inm.ip, self.inm.port)
+                if time.time() - self.inm.last_heartbeat > self.HEARTBEAT_TIMEOUT:
+                    print(f"  [server.py] [Server.send_heartbeats_to_inm] Heartbeat timeout for INM {self.inm.uuid}")
+                    # Handle potential INM failure (e.g., initiate election)
+                    self.start_election()
+                    self.inm = None
+            time.sleep(self.HEARTBEAT_INTERVAL)
+
+    def send_heartbeats_to_pan(self):
+        """Thread for AAN to send heartbeats to PAN."""
+        while not self.aan_to_pan_event.is_set() and self.state == Server.State.AAN:
+            if self.pan_node:
+                self.unicast_soc.send(MessageType.HEARTBEAT_REQUEST, str(self.uuid), self.pan_node.ip,
+                                      self.pan_node.port)
+                if time.time() - self.pan_node.last_heartbeat > self.HEARTBEAT_TIMEOUT:
+                    print(
+                        f"  [server.py] [Server.send_heartbeats_to_pan] Heartbeat timeout for PAN {self.pan_node.uuid}")
+                    self.request_new_pan()  # Function to request a new PAN from INM
+            time.sleep(self.HEARTBEAT_INTERVAL)
+
+    def send_heartbeats_to_aan(self):
+        """Thread for PAN to send heartbeats to AAN."""
+        while not self.pan_to_aan_event.is_set() and self.state == Server.State.PAN:
+            if self.aan_node:
+                self.unicast_soc.send(MessageType.HEARTBEAT_REQUEST, str(self.uuid), self.aan_node.ip,
+                                      self.aan_node.port)
+                if time.time() - self.aan_node.last_heartbeat > self.HEARTBEAT_TIMEOUT:
+                    print(
+                        f"  [server.py] [Server.send_heartbeats_to_aan] Heartbeat timeout for AAN {self.aan_node.uuid}")
+                    self.promote_to_aan()
+            time.sleep(self.HEARTBEAT_INTERVAL)
+
+    def promote_to_aan(self):
+        """Handles the PAN's transition to AAN upon AAN failure."""
+        print(f"  [server.py] [Server.promote_to_aan] PAN {self.uuid} promoting to AAN")
+        self.stop_all_heartbeat_threads()
+        self.state = Server.State.AAN
+
+        # Update auction timer (remaining time from the old AAN)
+        remaining_time = self.auction_end_time - time.time()
+        if remaining_time < 0:
+            remaining_time = 0
+        self.auction_end_time = time.time() + remaining_time
+        self.auction_timer = threading.Timer(remaining_time, self.finalize_auction)
+        self.auction_timer.start()
+
+        # The PAN already has the replicated state, so no need to copy
+        # Request a new PAN from the INM
+        self.request_pan(f"{str(self.uuid)},{self.ip},{self.port}")
+        print(f"  [server.py] [Server.promote_to_aan] Sent PAN_REQUEST request to INM (including IP and port)")
+
+        # Reset aan_node
+        self.aan_node = None
+        self.start_heartbeat_threads()
+
+    def request_new_pan(self):
+        """
+        Requests a new PAN from the INM.
+        """
+        if self.state == Server.State.AAN:
+            self.unicast_soc.send(MessageType.PAN_REQUEST, f"{str(self.uuid)},{self.ip},{self.port}", self.inm.ip,
+                                  self.inm.port)
+            print(f"  [server.py] [Server.request_new_pan] Sent PAN_REQUEST request to INM (including IP and port)")
 # used for dummy testing
 if __name__ == "__main__":
     myserver: Server = Server(5384)
