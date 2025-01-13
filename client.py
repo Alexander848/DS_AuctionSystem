@@ -33,7 +33,7 @@ class Client:
     def cli(self):
         while True:
             # removed connect from input
-            command = input("Enter command (info, list, start <item_id>, join <item_id>, bid <item_id> <amount>, exit): ")
+            command = input("Enter command (info, list, start <item_id>, join <item_id>, bid <item_id> <amount>, exit): \n")
             command_parts = command.split()
 
             if command_parts:
@@ -119,7 +119,7 @@ class Client:
                         else:
                             aan_ip, aan_port = response.content.split(",")
                             self.aan_address = (aan_ip, int(aan_port))
-                            print(f"Auction started. AAN address: {aan_ip}:{aan_port}")
+                            print(f"Auction is ongoing. AAN address: {aan_ip}:{aan_port}")
                     elif response.message_type == MessageType.JOIN_AUCTION_RESPONSE:
                         if response.content == "failed":
                             print(f"Failed to join auction")

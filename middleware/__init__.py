@@ -38,6 +38,7 @@ class MessageType(Enum):
     HEARTBEAT_RESPONSE = "HEARTBEAT_RESPONSE"
     REMOVE_NODE = "REMOVE_NODE"
     GROUPVIEW_UPDATE = "GROUPVIEW_UPDATE"  # New message type for groupview updates
+    REPLICATE_STATE_REQUEST = "REPLICATE_STATE_REQUEST"
 
 class Message():
     def __init__(self, message_type: MessageType = MessageType.TEST, content: str = "", src_ip: str = "-1", src_port: int = -1) -> None:

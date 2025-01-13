@@ -181,7 +181,8 @@ class Server:
             if thread != threading.current_thread():  # Exclude the main thread if needed
                 print(f"  - {thread.name} (daemon: {thread.daemon})")
         if self.state == Server.State.AAN:
-            print(f"PAN: {self.pan_node.uuid} ({self.pan_node.ip}:{self.pan_node.port})")
+            if self.pan_node is not None:
+                print(f"PAN: {self.pan_node.uuid} ({self.pan_node.ip}:{self.pan_node.port})")
             if hasattr(self, 'item_id'):
                 print(f"    Auction Item: {self.item_id}")
             if hasattr(self, 'highest_bid'):
@@ -195,7 +196,8 @@ class Server:
             if hasattr(self, 'auction_timer'):
                 print(f"    Time left: {int(self.auction_end_time - time.time())}")
         elif self.state == Server.State.PAN:
-            print(f"AAN: {self.aan_node.uuid} ({self.aan_node.ip}:{self.aan_node.port})")
+            if self.aan_node is not None:
+                print(f"AAN: {self.aan_node.uuid} ({self.aan_node.ip}:{self.aan_node.port})")
             if hasattr(self, 'item_id'):
                 print(f"    Auction Item: {self.item_id}")
             if hasattr(self, 'highest_bid'):
@@ -217,7 +219,6 @@ class Server:
             time.sleep(5)
 
     def get_available_items_from_api(self) -> list[dict]:
-        # In a real scenario, you'd query an external API
         # Here, we just return the simple item_data list
         return self.item_data
 
@@ -366,7 +367,9 @@ class Server:
                 )
         elif msg.message_type == MessageType.STATE_QUERY:
             print(f"    [server.py] [Server.message_parser] STATE_QUERY")
-            self.unicast_soc.send(MessageType.STATE_RESPONSE, self.state.name, msg.src_ip, msg.src_port)
+            # Include the requesting server's UUID in the response
+            response_content = f"{msg.content},{self.state.name}"
+            self.unicast_soc.send(MessageType.STATE_RESPONSE, response_content, msg.src_ip, msg.src_port)
         elif msg.message_type == MessageType.LIST_ITEMS_REQUEST:
             if self.state == Server.State.INM:
                 print(f"    [server.py] [Server.message_parser] LIST_ITEMS_REQUEST")
@@ -403,6 +406,9 @@ class Server:
             if self.state == Server.State.IDLE:  # Only idle nodes can become PANs
                 print(f"    [server.py] [Server.message_parser] PAN_RESPONSE")
                 self.set_as_pan(msg.content)
+        elif msg.message_type == MessageType.PAN_FAILURE:
+            if self.state == Server.State.AAN:
+                print(f"    [server.py] [Server.message_parser] PAN_FAILURE: no pan assigned")
         elif msg.message_type == MessageType.PAN_INFO:
             if self.state == Server.State.AAN:
                 print(f"    [server.py] [Server.message_parser] PAN_INFO")
@@ -474,10 +480,15 @@ class Server:
                     if hasattr(self, 'auction_timer'):
                         self.auction_timer.cancel()  # Cancel any existing timer
                     self.auction_timer = threading.Timer(remaining_time, self.finalize_auction)
+                    self.auction_timer.name = "AuctionTimerThread"
                     self.auction_timer.start()
 
                 print(
                     f"    [server.py] [Server.message_parser] Updated PAN state: item_id={item_id}, highest_bid={self.highest_bid}, highest_bidder={self.highest_bidder}, clients={self.clients}, remaining_time={remaining_time}")
+        elif msg.message_type == MessageType.REPLICATE_STATE_REQUEST:
+            if self.state == Server.State.AAN:
+                print(f"    [server.py] [Server.message_parser] [AAN] REPLICATE_STATE_REQUEST ")
+                self.replicate_state()
         elif msg.message_type == MessageType.AUCTION_END:
             if self.state == Server.State.PAN:
                 print(f"    [server.py] [Server.message_parser] [PAN] AUCTION_END ")
@@ -556,7 +567,7 @@ class Server:
                 self.groupview = new_groupview
                 print(f"    [server.py] [Server.message_parser] Updated groupview: {self.groupview}")
         else:
-            print("     [server.py] [Server.message_parser] ERROR: Unknown message")
+            print(f"     [server.py] [Server.message_parser] ERROR: Unknown message: {msg}")
 
     def start_auction(self, item_id: str, client_ip: str, client_port: int) -> None:
         """
@@ -597,27 +608,41 @@ class Server:
                     return node
         return None
 
-    def get_node_state(self, node: Node) -> State:
+    def get_node_state(self, node: Node) -> State: #TODO: does not always work as intended,  e.g.  receive heartbeat messages instead
         """
         Gets the state of a given node by sending a STATE_QUERY message.
+        Uses a dedicated UnicastSocket for this operation.
         """
-        print(f"  [server.py] [Server.get_node_state] Getting state of node {node.uuid}")
+        print(f"  [server.py] [Server.get_node_state] Getting state of node {node.uuid} ({node.ip}:{node.port})")
+
+        # Create a new UnicastSocket for this specific request
+        temp_unicast_soc = UnicastSocket(self.port)
 
         # Send a STATE_QUERY message to the node
-        self.unicast_soc.send(MessageType.STATE_QUERY, "", node.ip, node.port)
+        temp_unicast_soc.send(MessageType.STATE_QUERY, str(self.uuid), node.ip, node.port)
 
         # Wait for a response (with a timeout)
-        ready, _, _ = select.select([self.unicast_soc], [], [], 1.0)  # 1 second timeout
+        ready, _, _ = select.select([temp_unicast_soc], [], [], 2.5)
 
         if ready:
             response: Message = ready[0].receive()
-            if response.message_type == MessageType.STATE_RESPONSE:
-                print(f"  [server.py] [Server.get_node_state] Received state {response.content} from node {node.uuid}")
-                return Server.State[response.content]  # Convert string back to State enum
-            else:
-                print(f"  [server.py] [Server.get_node_state] Invalid response from node {node.uuid}")
+            # Ensure the response is for this request (if you implement UUID checking)
+            if response.message_type == MessageType.STATE_RESPONSE and response.content.startswith(str(self.uuid)):
+                # Extract the state from the content (assuming format: "requesting_uuid,state")
+                _, state_str = response.content.split(",", 1)
+                print(f"  [server.py] [Server.get_node_state] Received state {state_str} from node {node.uuid}")
+                temp_unicast_soc.close()
+                return Server.State[state_str]  # Convert string back to State enum
+            else: #TODO: fix the method
+                print(f"  [server.py] [Server.get_node_state] Invalid response {response} from node {node.uuid}")
+                temp_unicast_soc.close()
+                return Server.State.AAN #TODO: fix the method, removing this return makes it so nodes get removed more than they should, but actually not really a problem
 
         print(f"  [server.py] [Server.get_node_state] No response from node {node.uuid} within timeout")
+        if node in self.groupview:
+            self.groupview.remove(node)
+            self.send_groupview_update()  # Send groupview update after removing
+        temp_unicast_soc.close()
         return Server.State.UNINITIALIZED  # Or some other default state if no response
 
     def initialize_auction(self, item_id: str, client_ip: str, client_port: int) -> None:
@@ -652,6 +677,7 @@ class Server:
         # Start auction timer (30 seconds)
         self.auction_end_time = time.time() + 60
         self.auction_timer = threading.Timer(60, self.finalize_auction)
+        self.auction_timer.name = "AuctionTimerThread"
         self.auction_timer.start()
         print(
             f"  [server.py] [Server.initialize_auction] Starting auction timer {60} seconds from now at {self.auction_end_time}")
@@ -671,7 +697,7 @@ class Server:
         if pan_node is None:
             print(f"  [server.py] [Server.request_pan] No idle nodes available for PAN.")
             # Inform the AAN that no PAN could be assigned
-            self.unicast_soc.send(MessageType.PAN_FAILURE, "No idle nodes available", aan_ip, int(aan_port))
+            self.unicast_soc.send(MessageType.PAN_FAILURE, "Noidlenodesavailable", aan_ip, int(aan_port))
             return
 
         # 2. Inform the Chosen Node that it's the PAN
@@ -685,6 +711,10 @@ class Server:
         self.unicast_soc.send(MessageType.PAN_INFO, f"{pan_node.ip},{pan_node.port},{pan_node.uuid}", aan_ip, int(aan_port))
         print(f"  [server.py] [Server.request_pan] Sent PAN_INFO to AAN at {aan_ip}:{aan_port}")
 
+        # 4. Trigger state replication from AAN to new PAN
+        self.unicast_soc.send(MessageType.REPLICATE_STATE_REQUEST, "", aan_ip, int(aan_port))
+        print(f"  [server.py] [Server.request_pan] Sent REPLICATE_STATE_REQUEST to AAN at {aan_ip}:{aan_port}")
+
     def set_as_pan(self, pan_data: str) -> None:
         """
         Handles the PAN_RESPONSE message when the server is the chosen PAN.
@@ -692,6 +722,7 @@ class Server:
         aan_uuid, aan_ip, aan_port = pan_data.split(",")
         print(f"  [server.py] [Server.set_as_pan] Designated as PAN for AAN {aan_uuid} ({aan_ip}:{aan_port})")
         self.state = Server.State.PAN
+
         # Store AAN information for potential future use
         self.aan_node = Server.Node(aan_ip, int(aan_port), uuid.UUID(aan_uuid))
 
@@ -821,13 +852,20 @@ class Server:
             if node.uuid != self.uuid:
                 try:
                     self.unicast_soc.send(MessageType.HEARTBEAT_REQUEST, str(self.uuid), node.ip, node.port)
-
                     #sometimes the INM sends it to a node but that node is not correctly displayed in groupview?
                     self.groupview.add(node)
                 except Exception as e:
                     print(f"Heartbeat send failed: {e}")
                 if time.time() - node.last_heartbeat > self.HEARTBEAT_TIMEOUT:
-                    nodes_to_remove.add(node)
+
+                    # check if node is AAN or PAN, in this case it should just be kept in our groupview, so we reset its heartbeat manually
+                    if node.uuid != self.uuid:
+                        node_state = self.get_node_state(node)
+                        if node_state in [Server.State.AAN, Server.State.PAN]:
+                            print(f"  [server.py] [Server.send_heartbeats_to_idle_nodes_once] node is PAN or AAN, keeping it in groupview")
+                            node.last_heartbeat = time.time()
+
+                        nodes_to_remove.add(node)
 
         for node in nodes_to_remove:
             if node in self.groupview:
@@ -875,18 +913,34 @@ class Server:
                         self.send_groupview_update()
                         break
 
-                # Check if the current node has the highest UUID after INM removal
+                # Check if the current node has the highest UUID of idle nodes (excluding AAN and PAN) after INM removal
                 if self.groupview:
-                    highest_uuid = max(node.uuid for node in self.groupview)
-                    if self.uuid == highest_uuid:
-                        print(f"  [server.py] [Server.send_heartbeats_to_inm_once] This node has the highest UUID after INM removal.")
-                        self.inm = None  # Reset INM before starting election
-                        self.start_election()
-                        self.inm_thread: Thread = Thread(target=self.declare_inm, args=(lambda: self.received_ack,))
-                        self.inm_thread.start()
+                    idle_nodes = []
+                    if self.state not in [Server.State.AAN, Server.State.PAN]:
+                        idle_nodes.append(self)
+                    for node in self.groupview.copy():
+                        if node.uuid != self.uuid:
+                            node_state = self.get_node_state(node)
+                            if node_state not in [Server.State.AAN, Server.State.PAN]:
+                                idle_nodes.append(node)
+
+                    if idle_nodes:
+                        highest_uuid = max(node.uuid for node in idle_nodes)
+                        if self.uuid == highest_uuid:
+                            print(
+                                f"  [server.py] [Server.send_heartbeats_to_inm_once] This node has the highest UUID among idle nodes after INM removal.")
+                            self.inm = None  # Reset INM before starting election
+                            self.start_election()
+                            self.inm_thread: Thread = Thread(target=self.declare_inm, args=(lambda: self.received_ack,))
+                            self.inm_thread.start()
+                        else:
+                            print(
+                                f"  [server.py] [Server.send_heartbeats_to_inm_once] This node does not have the highest UUID among idle nodes. Waiting for new INM.")
+                            self.inm = None  # Reset INM in case a new one is elected
                     else:
-                        print(f"  [server.py] [Server.send_heartbeats_to_inm_once] This node does not have the highest UUID. Waiting for new INM.")
-                        self.inm = None  # Reset INM in case a new one is elected
+                        print(
+                            f"  [server.py] [Server.send_heartbeats_to_inm_once] No idle nodes found. Waiting for new INM.")
+                        #self.inm = None  # Reset INM in case a new one is elected
         else:
             # this case happens when multiple nodes including INM crash at once
             # trigger election because no INM? could use find_INM first?
@@ -896,9 +950,11 @@ class Server:
             print("INM not set or invalid; skipping heartbeat send.")
 
     def send_heartbeats_to_pan_once(self):
-        print(f"  [server.py] [Server.send_heartbeats_to_pan_once] Sending heartbeat to PAN timeleft:{time.time() - self.pan_node.last_heartbeat}")
         if self.pan_node:
             try:
+                print(
+                    f"  [server.py] [Server.send_heartbeats_to_pan_once] Sending heartbeat to PAN timeleft:{time.time() - self.pan_node.last_heartbeat}")
+
                 self.unicast_soc.send(MessageType.HEARTBEAT_REQUEST, str(self.uuid), self.pan_node.ip,
                                       self.pan_node.port)
             except Exception as e:
@@ -934,7 +990,14 @@ class Server:
         # if hasattr(self, 'auction_timer'):
         #     self.auction_timer.cancel()
         # self.auction_timer = threading.Timer(remaining_time, self.finalize_auction)
+        # self.auction_timer.name = "AuctionTimerThread"
         # self.auction_timer.start()
+
+        # Inform clients about the new AAN address
+        for client_ip, client_port, client_uuid in self.clients:
+            self.unicast_soc.send(MessageType.START_AUCTION_RESPONSE, f"{self.ip},{self.port}", client_ip, client_port)
+            print(
+                f"  [server.py] [Server.promote_to_aan] Sent START_AUCTION_RESPONSE (new AAN info) to client at {client_ip}:{client_port}")
 
         # Request a new PAN from the INM
         self.request_new_pan()
