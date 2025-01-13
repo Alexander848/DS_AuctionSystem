@@ -111,16 +111,15 @@ class Server:
         self.info_thread.daemon = True  # Allow the main thread to exit even if this thread is running
         self.info_thread.start()
 
-        # Heartbeat threads and events
-        self.heartbeat_threads: list[Thread] = []
-        self.inm_to_idle_event: threading.Event = threading.Event()
-        self.idle_to_inm_event: threading.Event = threading.Event()
-        self.aan_to_pan_event: threading.Event = threading.Event()
-        self.pan_to_aan_event: threading.Event = threading.Event()
+        self._heartbeat_thread = None
+        self._heartbeat_stop_event = threading.Event()
+        self.election_in_progress: bool = False
 
         # Heartbeat constants
         self.HEARTBEAT_INTERVAL = 10  # Example: 5 seconds
         self.HEARTBEAT_TIMEOUT = 2 * self.HEARTBEAT_INTERVAL
+
+
 
         self.main()
 
@@ -135,7 +134,9 @@ class Server:
         # causes election to start in message_parser
         self.unicast_soc.send(MessageType.ELECTION_START, str(self.uuid), self.ip, self.port)
         self.state = Server.State.IDLE
-        self.start_heartbeat_threads()
+
+        # Start the centralized heartbeat thread once after initialization
+        self.start_heartbeat_thread()
 
         # main loop
         while True:
@@ -164,11 +165,19 @@ class Server:
     def print_info(self) -> None:
         """Prints the server's information to the console."""
         print(f"\n===== Server Info =====")
-        print(f"UUID: {self.uuid}")
+        #print(f"UUID: {self.uuid}")
         print(f"State: {self.state.name}")
         print(f"IP: {self.ip}")
         print(f"Port: {self.port}")
-        print(f"Groupview: {self.groupview}")
+        # Print only the ports of nodes in the groupview
+        groupview_ports = [node.port for node in self.groupview]
+        print(f"Groupview Ports: {groupview_ports}")
+        # Display running threads
+        #print(f"Election in progress: {self.election_in_progress}")
+        print("Running Threads:")
+        for thread in threading.enumerate():
+            if thread != threading.current_thread():  # Exclude the main thread if needed
+                print(f"  - {thread.name} (daemon: {thread.daemon})")
         if self.state == Server.State.AAN:
             print(f"  PAN: {self.pan_node.uuid} ({self.pan_node.ip}:{self.pan_node.port})")
             if hasattr(self, 'item_id'):
@@ -263,6 +272,7 @@ class Server:
         to all nodes with a higher UUID than self.uuid
         """
         print(f"  [server.py] [Server.start_election]")
+        self.election_in_progress = True
         higher_id_nodes: list[Server.Node] = [node for node in self.groupview if node.uuid > self.uuid]
         print(f"  [server.py] [Server.start_election] {len(higher_id_nodes)=}")
         for node in higher_id_nodes:
@@ -282,10 +292,11 @@ class Server:
             return
         print(f"  [server.py] [Server.declare_inm] declaring itself inm")
 
-        self.stop_all_heartbeat_threads()
         self.state = Server.State.INM
-        self.start_heartbeat_threads()
         self.idle_grp_sock.send(MessageType.DECLARE_INM, str(self.uuid))
+
+        # Election is finished (this node is INM)
+        self.election_in_progress = False
 
     def message_parser(self) -> None:
         """
@@ -317,9 +328,8 @@ class Server:
         elif msg.message_type == MessageType.DECLARE_INM:
             print(f"    [server.py] [Server.message_parser] DECLARE_INM")
             if msg.src_port != self.port:
-                self.stop_all_heartbeat_threads()
                 self.state = Server.State.IDLE
-                self.start_heartbeat_threads()
+                self.election_in_progress = False  # Election is finished (another node is INM)
                 print(f"    [server.py] [Server.message_parser] DECLARE_INM SERVER {self.port} back to IDLE")
             self.inm = Server.Node(msg.src_ip, msg.src_port, uuid.UUID(msg.content))
             print(f"    [server.py] [Server.message_parser] DECLARE_INM {self.inm}")
@@ -446,8 +456,17 @@ class Server:
                 self.aan_node.last_heartbeat = time.time()
         elif msg.message_type == MessageType.HEARTBEAT_RESPONSE:
             print(f"    [server.py] [Server.message_parser] HEARTBEAT_RESPONSE")
-            # Update the last_heartbeat timestamp of the sender
             if self.state == Server.State.INM:
+                # Check if the node is already in the groupview, TODO: this should never happen but sometimes happens when switching to INM and bad timing??
+                node_exists = any(node.ip == msg.src_ip and node.port == msg.src_port for node in self.groupview)
+
+                if not node_exists:
+                    print(
+                        f"    [server.py] [Server.message_parser] Re-adding node {msg.src_ip}:{msg.src_port} to groupview")
+                    new_node = Server.Node(msg.src_ip, msg.src_port, uuid.UUID(msg.content))
+                    self.groupview.add(new_node)
+                    self.send_groupview_update()  # Send groupview update after re-adding
+                # Node exists, update its heartbeat (no else needed)
                 for node in self.groupview:
                     if node.ip == msg.src_ip and node.port == msg.src_port:
                         node.last_heartbeat = time.time()
@@ -458,6 +477,16 @@ class Server:
                 self.pan_node.last_heartbeat = time.time()
             elif self.state == Server.State.PAN and self.aan_node and self.aan_node.ip == msg.src_ip and self.aan_node.port == msg.src_port:
                 self.aan_node.last_heartbeat = time.time()
+        elif msg.message_type == MessageType.GROUPVIEW_UPDATE:
+            if self.state == Server.State.IDLE:
+                print(f"    [server.py] [Server.message_parser] GROUPVIEW_UPDATE")
+                new_groupview = set()
+                nodes_str = msg.content.split(";")
+                for node_str in nodes_str:
+                    ip, port, uuid_str = node_str.split(":")
+                    new_groupview.add(Server.Node(ip, int(port), uuid.UUID(uuid_str)))
+                self.groupview = new_groupview
+                print(f"    [server.py] [Server.message_parser] Updated groupview: {self.groupview}")
         else:
             print("     [server.py] [Server.message_parser] ERROR: Unknown message")
 
@@ -529,7 +558,6 @@ class Server:
 
         """
         print(f"  [server.py] [Server.initialize_auction] Initializing auction for item '{item_id}'")
-        self.stop_all_heartbeat_threads()
 
         # 1. Store Auction Information
         self.item_id = item_id
@@ -560,7 +588,6 @@ class Server:
         self.auction_timer.start()
         print(
             f"  [server.py] [Server.initialize_auction] Starting auction timer {20} seconds from now at {self.auction_end_time}")
-        self.start_heartbeat_threads()
 
     def request_pan(self, aan_data: str) -> None:
         """
@@ -597,11 +624,9 @@ class Server:
         """
         aan_uuid, aan_ip, aan_port = pan_data.split(",")
         print(f"  [server.py] [Server.set_as_pan] Designated as PAN for AAN {aan_uuid} ({aan_ip}:{aan_port})")
-        self.stop_all_heartbeat_threads()
         self.state = Server.State.PAN
         # Store AAN information for potential future use
         self.aan_node = Server.Node(aan_ip, int(aan_port), uuid.UUID(aan_uuid))
-        self.start_heartbeat_threads()
 
     def join_auction(self, item_id: str, client_uuid: str, client_ip: str, client_port: int) -> None:
         """
@@ -637,7 +662,6 @@ class Server:
     def return_to_idle(self):
         """Resets the server to the IDLE state and clears auction-related data."""
         print(f"  [server.py] [Server.return_to_idle] Server {self.uuid} returning to IDLE")
-        self.stop_all_heartbeat_threads()
         self.state = Server.State.IDLE
 
         # Clear auction data
@@ -651,7 +675,6 @@ class Server:
             self.pan_node = None
         elif self.aan_node:  # This was a PAN
             self.aan_node = None
-        self.start_heartbeat_threads()
 
     def finalize_auction(self):
         print(f"  [server.py] [Server.finalize_auction] Finalizing auction for item {self.item_id}")
@@ -668,115 +691,119 @@ class Server:
         # 3. Reset AAN State
         self.return_to_idle()
 
-    def start_heartbeat_threads(self):
-        """Starts the correct heartbeat thread based on the server's state."""
-        print(f"  [server.py] [Server.start_heartbeat_threads] Starting heartbeat threads for state: {self.state.name}")
+    def start_heartbeat_thread(self):
+        """Start a single persistent heartbeat thread if not already running."""
+        print(f"  [server.py] [Server.start_heartbeat_thread] Starting heartbeat thread")
+        if self._heartbeat_thread is None or not self._heartbeat_thread.is_alive():
+            self._heartbeat_stop_event.clear()
+            self._heartbeat_thread = Thread(target=self.heartbeat_loop, name="HeartbeatThread")
+            self._heartbeat_thread.daemon = True
+            self._heartbeat_thread.start()
 
-        # Stop any running threads that are no longer needed
-        self.stop_all_heartbeat_threads()
+    def stop_heartbeat_thread(self):
+        """Signal the heartbeat thread to stop and wait for it to finish."""
+        print(f"  [server.py] [Server.stop_heartbeat_thread] Stopping heartbeat thread")
+        self._heartbeat_stop_event.set()
+        if self._heartbeat_thread is not None:
+            self._heartbeat_thread.join()
+        self._heartbeat_thread = None
 
-        if self.state == Server.State.INM:
-            self.inm_to_idle_event.clear()  # Reset the event
-            inm_to_idle_thread = Thread(target=self.send_heartbeats_to_idle_nodes)
-            inm_to_idle_thread.daemon = True
-            inm_to_idle_thread.start()
-            self.heartbeat_threads.append(inm_to_idle_thread)
-        elif self.state == Server.State.IDLE:
-            self.idle_to_inm_event.clear()  # Reset the event
-            idle_to_inm_thread = Thread(target=self.send_heartbeats_to_inm)
-            idle_to_inm_thread.daemon = True
-            idle_to_inm_thread.start()
-            self.heartbeat_threads.append(idle_to_inm_thread)
-        elif self.state == Server.State.AAN:
-            self.aan_to_pan_event.clear()  # Reset the event
-            aan_to_pan_thread = Thread(target=self.send_heartbeats_to_pan)
-            aan_to_pan_thread.daemon = True
-            aan_to_pan_thread.start()
-            self.heartbeat_threads.append(aan_to_pan_thread)
-        elif self.state == Server.State.PAN:
-            self.pan_to_aan_event.clear()  # Reset the event
-            pan_to_aan_thread = Thread(target=self.send_heartbeats_to_aan)
-            pan_to_aan_thread.daemon = True
-            pan_to_aan_thread.start()
-            self.heartbeat_threads.append(pan_to_aan_thread)
+    def heartbeat_loop(self):
+        """Single loop that sends heartbeats based on the server's state."""
+        while not self._heartbeat_stop_event.is_set():
+            # INM state: send heartbeat to idle nodes
+            if self.state == Server.State.INM:
+                self.send_heartbeats_to_idle_nodes_once()
+            # IDLE state: send heartbeat to INM
+            elif self.state == Server.State.IDLE:
+                self.send_heartbeats_to_inm_once()
+            # AAN state: send heartbeat to PAN
+            elif self.state == Server.State.AAN:
+                self.send_heartbeats_to_pan_once()
+            # PAN state: send heartbeat to AAN
+            elif self.state == Server.State.PAN:
+                self.send_heartbeats_to_aan_once()
 
-    def stop_all_heartbeat_threads(self):
-        """Stops all running heartbeat threads by setting their events."""
-        print(f"  [server.py] [Server.stop_all_heartbeat_threads] Stopping all heartbeat threads")
-        self.inm_to_idle_event.set()
-        self.idle_to_inm_event.set()
-        self.aan_to_pan_event.set()
-        self.pan_to_aan_event.set()
+            # Sleep for heartbeat interval or check stop condition more frequently if needed
+            self._heartbeat_stop_event.wait(self.HEARTBEAT_INTERVAL)
 
-        # Wait for threads to terminate gracefully
-        for thread in self.heartbeat_threads:
-            if thread.is_alive():
-                thread.join()
-        self.heartbeat_threads.clear()
-
-    def send_heartbeats_to_idle_nodes(self):
-        """Thread for INM to send heartbeats to idle nodes."""
-        while not self.inm_to_idle_event.is_set() and self.state == Server.State.INM:
-            nodes_to_remove = set()  # Create an empty set to track nodes to be removed
-            for node in self.groupview.copy():  # Iterate over a copy of the set
-                if node.uuid != self.uuid:  # Skip the INM itself
+    def send_heartbeats_to_idle_nodes_once(self):
+        # Logic from send_heartbeats_to_idle_nodes but for one iteration only
+        print(f"  [server.py] [Server.send_heartbeats_to_idle_nodes_once] Sending heartbeats to idle nodes")
+        nodes_to_remove = set()
+        for node in self.groupview.copy():
+            if node.uuid != self.uuid:
+                try:
                     self.unicast_soc.send(MessageType.HEARTBEAT_REQUEST, str(self.uuid), node.ip, node.port)
-                    if time.time() - node.last_heartbeat > self.HEARTBEAT_TIMEOUT:
-                        print(
-                            f"  [server.py] [Server.send_heartbeats_to_idle_nodes] Heartbeat timeout for node {node.uuid}")
-                        # Handle potential failure (e.g., add to suspect list, remove from groupview after several timeouts)
-                        nodes_to_remove.add(node)
-                        print(
-                            f"  [server.py] [Server.send_heartbeats_to_idle_nodes] Marked node {node.uuid} for removal")
+                except Exception as e:
+                    print(f"Heartbeat send failed: {e}")
+                if time.time() - node.last_heartbeat > self.HEARTBEAT_TIMEOUT:
+                    nodes_to_remove.add(node)
 
-            # Remove the marked nodes after the iteration
-            for node in nodes_to_remove:
-                if node in self.groupview:  # Double check to avoid KeyError
-                    self.groupview.remove(node)
-                    print(
-                        f"  [server.py] [Server.send_heartbeats_to_idle_nodes] Removed node {node.uuid} from groupview")
-            time.sleep(self.HEARTBEAT_INTERVAL)
+        for node in nodes_to_remove:
+            if node in self.groupview:
+                self.groupview.remove(node)
+                self.send_groupview_update()
 
-    def send_heartbeats_to_inm(self):
-        """Thread for idle nodes to send heartbeats to INM."""
-        while not self.idle_to_inm_event.is_set() and self.state == Server.State.IDLE:
-            if self.inm:
+    def send_heartbeats_to_inm_once(self):
+        print(f"  [server.py] [Server.send_heartbeats_to_inm_once] Sending heartbeat to INM")
+        if self.inm and self.inm.port > 0:
+            try:
                 self.unicast_soc.send(MessageType.HEARTBEAT_REQUEST, str(self.uuid), self.inm.ip, self.inm.port)
-                if time.time() - self.inm.last_heartbeat > self.HEARTBEAT_TIMEOUT:
-                    print(f"  [server.py] [Server.send_heartbeats_to_inm] Heartbeat timeout for INM {self.inm.uuid}")
-                    # Handle potential INM failure (e.g., initiate election)
-                    self.start_election()
-                    self.inm = None
-            time.sleep(self.HEARTBEAT_INTERVAL)
+            except Exception as e:
+                print(f"Heartbeat send failed: {e}")
+            if time.time() - self.inm.last_heartbeat > self.HEARTBEAT_TIMEOUT:
+                print(f"  [server.py] [Server.send_heartbeats_to_inm_once] INM heartbeat timeout")
 
-    def send_heartbeats_to_pan(self):
-        """Thread for AAN to send heartbeats to PAN."""
-        while not self.aan_to_pan_event.is_set() and self.state == Server.State.AAN:
-            if self.pan_node:
+                # Remove the INM from the groupview
+                temp_groupview = self.groupview.copy()
+                for node in temp_groupview:
+                    if node.uuid == self.inm.uuid:
+                        self.groupview.remove(node)
+                        print(f"  [server.py] [Server.send_heartbeats_to_inm_once] Removed INM {self.inm.uuid} from groupview")
+                        self.send_groupview_update()
+                        break
+
+                # Check if the current node has the highest UUID after INM removal
+                if self.groupview:
+                    highest_uuid = max(node.uuid for node in self.groupview)
+                    if self.uuid == highest_uuid:
+                        print(f"  [server.py] [Server.send_heartbeats_to_inm_once] This node has the highest UUID after INM removal.")
+                        self.inm = None  # Reset INM before starting election
+                        self.start_election()
+                        self.inm_thread: Thread = Thread(target=self.declare_inm, args=(lambda: self.received_ack,))
+                        self.inm_thread.start()
+                    else:
+                        print(f"  [server.py] [Server.send_heartbeats_to_inm_once] This node does not have the highest UUID. Waiting for new INM.")
+                        self.inm = None  # Reset INM in case a new one is elected
+        else:
+            print("INM not set or invalid; skipping heartbeat send.")
+
+    def send_heartbeats_to_pan_once(self):
+        print(f"  [server.py] [Server.send_heartbeats_to_pan_once] Sending heartbeat to PAN")
+        if self.pan_node:
+            try:
                 self.unicast_soc.send(MessageType.HEARTBEAT_REQUEST, str(self.uuid), self.pan_node.ip,
                                       self.pan_node.port)
-                if time.time() - self.pan_node.last_heartbeat > self.HEARTBEAT_TIMEOUT:
-                    print(
-                        f"  [server.py] [Server.send_heartbeats_to_pan] Heartbeat timeout for PAN {self.pan_node.uuid}")
-                    self.request_new_pan()  # Function to request a new PAN from INM
-            time.sleep(self.HEARTBEAT_INTERVAL)
+            except Exception as e:
+                print(f"Heartbeat send failed: {e}")
+            if time.time() - self.pan_node.last_heartbeat > self.HEARTBEAT_TIMEOUT:
+                self.request_new_pan()
 
-    def send_heartbeats_to_aan(self):
-        """Thread for PAN to send heartbeats to AAN."""
-        while not self.pan_to_aan_event.is_set() and self.state == Server.State.PAN:
-            if self.aan_node:
+    def send_heartbeats_to_aan_once(self):
+        print(f"  [server.py] [Server.send_heartbeats_to_aan_once] Sending heartbeat to AAN")
+        if self.aan_node:
+            try:
                 self.unicast_soc.send(MessageType.HEARTBEAT_REQUEST, str(self.uuid), self.aan_node.ip,
                                       self.aan_node.port)
-                if time.time() - self.aan_node.last_heartbeat > self.HEARTBEAT_TIMEOUT:
-                    print(
-                        f"  [server.py] [Server.send_heartbeats_to_aan] Heartbeat timeout for AAN {self.aan_node.uuid}")
-                    self.promote_to_aan()
-            time.sleep(self.HEARTBEAT_INTERVAL)
+            except Exception as e:
+                print(f"Heartbeat send failed: {e}")
+            if time.time() - self.aan_node.last_heartbeat > self.HEARTBEAT_TIMEOUT:
+                self.promote_to_aan()
 
     def promote_to_aan(self):
         """Handles the PAN's transition to AAN upon AAN failure."""
         print(f"  [server.py] [Server.promote_to_aan] PAN {self.uuid} promoting to AAN")
-        self.stop_all_heartbeat_threads()
         self.state = Server.State.AAN
 
         # Update auction timer (remaining time from the old AAN)
@@ -794,7 +821,6 @@ class Server:
 
         # Reset aan_node
         self.aan_node = None
-        self.start_heartbeat_threads()
 
     def request_new_pan(self):
         """
@@ -804,6 +830,14 @@ class Server:
             self.unicast_soc.send(MessageType.PAN_REQUEST, f"{str(self.uuid)},{self.ip},{self.port}", self.inm.ip,
                                   self.inm.port)
             print(f"  [server.py] [Server.request_new_pan] Sent PAN_REQUEST request to INM (including IP and port)")
+
+    def send_groupview_update(self):
+        """Sends the current groupview to all idle nodes."""
+        if self.state == Server.State.INM:
+            groupview_str = ";".join([f"{node.ip}:{node.port}:{node.uuid}" for node in self.groupview])
+            print(f"  [server.py] [Server.send_groupview_update] Sending groupview update: {groupview_str}")
+            self.idle_grp_sock.send(MessageType.GROUPVIEW_UPDATE, groupview_str)
+
 # used for dummy testing
 if __name__ == "__main__":
     myserver: Server = Server(5384)
