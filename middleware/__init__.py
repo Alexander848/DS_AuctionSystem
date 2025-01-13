@@ -8,6 +8,7 @@
 
 from enum import Enum
 import socket
+from uuid import UUID
 
 
 class MessageType(Enum):
@@ -22,12 +23,12 @@ class MessageType(Enum):
 
 
 class Message():
-    def __init__(self, message_type: MessageType = MessageType.TEST, content: str = "", src_ip: str = "-1", src_port: int = -1, message_id: int = -1) -> None:
+    def __init__(self, message_type: MessageType, content: str, src_ip: str, src_port: int, message_id: UUID) -> None:
         self.message_type : MessageType = message_type
         self.content: str = content
         self.src_ip: str = src_ip
         self.src_port: int = src_port
-        self.message_id: int = message_id
+        self.message_id: UUID = message_id
 
     def __str__(self) -> str:
         return f"{self.message_type.value} {self.content} {self.src_ip} {self.src_port} {self.message_id}"
