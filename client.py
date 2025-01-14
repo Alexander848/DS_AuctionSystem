@@ -10,6 +10,13 @@ from middleware.multicast import MulticastSocket
 from middleware import get_my_ip
 
 class Client:
+    """
+    The Client class manages interactions with an auction system via
+    unicast and multicast communication. It allows users to list available
+    items, start auctions, join auctions, place bids, and view client
+    information. It also listens for messages and updates auction states.
+    """
+    
     def __init__(self, port: int) -> None:
         self.uuid: uuid.UUID = uuid.uuid4()
         self.ip: str = get_my_ip()
@@ -19,11 +26,12 @@ class Client:
         self.unicast_soc: UnicastSocket = UnicastSocket(self.port)
         self.multicast_soc: MulticastSocket = MulticastSocket(self.port)
         self.inm_address: tuple[str, int] = ("", -1)  # (IP, port) of the INM - still used for responses, might be removed later
-        # remove inm_unicast_soc and replace it by unicast_soc
-        # self.inm_unicast_soc: UnicastSocket = None  # Socket for persistent INM connection
+        # self.inm_unicast_soc: UnicastSocket = None  # Socket for persistent INM connection 
+        
         self.listener_thread: threading.Thread = threading.Thread(target=self.listen_for_messages)
-        self.listener_thread.daemon = True  # Allow the main thread to exit even if the listener thread is running
+        self.listener_thread.daemon = True  
         self.listener_thread.start()
+        
         self.main()
 
     def main(self):
@@ -31,21 +39,29 @@ class Client:
             self.cli()
 
     def cli(self):
+        """
+        Command Line Interface (CLI) for handling user commands 
+        such as listing items, starting/joining auctions, placing bids, and exiting.
+        """
         while True:
             # removed connect from input
             command = input("Enter command (info, list, start <item_id>, join <item_id>, bid <item_id> <amount>, exit): \n")
             command_parts = command.split()
-
+    
             if command_parts:
                 action = command_parts[0]
-
+    
                 # removed connect case
+                
+                # Handle the 'list' command - display available items.
                 if action == "list":
                     self.list_items()
                     break
-                if action == "info":  # Handle 'info' command
+                # Handle the 'info' command - display client's information.
+                if action == "info":
                     self.display_client_info()
                     break
+                # Handle the 'start' command - start an auction for a specified item.
                 if action == "start":
                     if len(command_parts) == 2:
                         item_id = command_parts[1]
@@ -53,13 +69,16 @@ class Client:
                     else:
                         print("Invalid start command. Usage: start <item_id>")
                     break
+                # Handle the 'join' command - join an auction for a specified item.
                 if action == "join":
                     if len(command_parts) == 2:
                         item_id = command_parts[1]
                         self.join_auction(item_id)
+                        
                     else:
                         print("Invalid join command. Usage: join <item_id>")
                     break
+                # Handle the 'bid' command - place a bid on an item.
                 if action == "bid":
                     if len(command_parts) == 3:
                         item_id = command_parts[1]
@@ -72,6 +91,7 @@ class Client:
                     else:
                         print("Invalid bid command. Usage: bid <item_id> <amount>")
                     break
+                # Handle the 'exit' command - terminate the application.
                 elif action == "exit":
                     print("Exiting client...")
                     exit()
@@ -81,6 +101,13 @@ class Client:
     # removed connect_to_inm TODO: ADD CONNECT TO INM AND USE UNICAST?
 
     def listen_for_messages(self):
+        """
+        Continuously listens for incoming messages on the unicast socket and handles them based on message type.
+        - Uses the `self.unicast_soc` socket to receive messages from the server.
+        - Processes different message types (e.g., LIST_ITEMS_RESPONSE, START_AUCTION_RESPONSE, etc.).
+        - Updates auction state and joins or displays information based on received messages.
+        """
+    
         while True:
             # Listen on self.unicast_soc
             sockets_to_listen = [self.unicast_soc]
@@ -113,6 +140,8 @@ class Client:
                                 f"{item['itemID']:<2} | {item['itemname']:<16} | {item['price']}"
                             )
                         print("-----------------")
+                    
+                    # Received when starting auction or when AAN changes
                     elif response.message_type == MessageType.START_AUCTION_RESPONSE:
                         if response.content.startswith("ERROR"):
                             print(f"Failed to start auction: {response.content}")
@@ -120,31 +149,25 @@ class Client:
                             aan_ip, aan_port = response.content.split(",")
                             self.aan_address = (aan_ip, int(aan_port))
                             print(f"Auction is ongoing. AAN address: {aan_ip}:{aan_port}")
+                    
                     elif response.message_type == MessageType.JOIN_AUCTION_RESPONSE:
                         if response.content == "failed":
                             print(f"Failed to join auction")
                         else:
-                            item_id, highest_bid, highest_bidder = response.content.split(
-                                ","
-                            )
-                            self.aan_address = (
-                                response.src_ip,
-                                response.src_port,
-                            )  # Store AAN address
+                            item_id, highest_bid, highest_bidder = response.content.split(",")
+                            self.aan_address = ( response.src_ip,response.src_port,) 
+                            
                             # Update joined_auctions
-                            self.joined_auctions[item_id] = {
-                                "highest_bid": highest_bid,
-                                "highest_bidder": highest_bidder,
-                            }
+                            self.joined_auctions[item_id] = {"highest_bid": highest_bid,"highest_bidder": highest_bidder}
                             print(f"Successfully joined auction for item {item_id}")
-                            print(
-                                f"  Current highest bid: {highest_bid} (by {highest_bidder if highest_bidder != 'None' else 'no one'})"
-                                )
-                    elif response.message_type == MessageType.BID_RESPONSE: # this handling is terrible but no other way because of message format
+                            print(f"  Current highest bid: {highest_bid} (by {highest_bidder if highest_bidder != 'None' else 'no one'})")
+                    
+                    # this handling is terrible but no other way because of message format
+                    elif response.message_type == MessageType.BID_RESPONSE: 
                         print(f"Bid response: {response.content}")
                         if response.content.startswith("Bid-for"):
                             parts = response.content.split("-")
-                            if len(parts) == 7:  # Bid accepted (Corrected length check)
+                            if len(parts) == 7:  # Bid accepted 
                                 item_id = parts[2]
                                 bid_amount = parts[6]
                                 remaining_time = parts[8]
@@ -156,7 +179,7 @@ class Client:
                                     print(
                                         f"Bid for {item_id} accepted. New highest bid: {bid_amount} by you. Time left: {remaining_time} seconds"
                                     )
-                            elif len(parts) == 11:  # Bid rejected (Corrected length check)
+                            elif len(parts) == 11:  # Bid rejected 
                                 item_id = parts[2]
                                 bid_amount = parts[4]
                                 highest_bid = parts[10]
@@ -168,6 +191,7 @@ class Client:
                                 print(
                                     f"Bid for {item_id} for {bid_amount} rejected. Current highest bid: {highest_bid} by another client. Time left: {remaining_time} seconds"
                                 )
+                    
                     elif response.message_type == MessageType.AUCTION_END:
                         print(f"Auction end response: {response.content}")
                         item_id, highest_bid, highest_bidder, result = response.content.split(",")
@@ -179,10 +203,9 @@ class Client:
                         # Remove the auction from joined_auctions
                         if item_id in self.joined_auctions:
                             del self.joined_auctions[item_id]
+                    
                     else:
-                        print(
-                            f"Received unknown or invalid message: {response}"
-                        )
+                        print(f"Received unknown or invalid message: {response}")
 
     def display_client_info(self) -> None:
         """Displays the client's current information."""
@@ -209,23 +232,32 @@ class Client:
         print("=======================\n")
 
     def list_items(self):
-        # broadcast the request to all servers
+        """
+        Sends a LIST_ITEMS_REQUEST message to discover available auction items.
+        This message is broadcast to all servers using the multicast socket.
+        """
         self.multicast_soc.send(MessageType.LIST_ITEMS_REQUEST, str(self.uuid))
         print("Sent LIST_ITEMS_REQUEST to INM")
 
     def start_auction(self, item_id: str = ""):
-        # broadcast the request to all servers
+        """
+        Sends a START_AUCTION_REQUEST message to initiate an auction for the specified item.
+        This message is broadcast to all servers using the multicast socket.
+        
+        :param item_id: The ID of the item to start the auction for.
+        """
         self.multicast_soc.send(MessageType.START_AUCTION_REQUEST, item_id)
         print(f"Sent START_AUCTION_REQUEST for item {item_id} to INM")
 
     def join_auction(self, item_id: str):
         """
-        Sends a JOIN_AUCTION_REQUEST to the AAN.
+        Sends a JOIN_AUCTION_REQUEST message to participate
+        in an auction for the specified item.
+        This message is broadcast to all servers using the multicast socket.
         """
         message_content = f"{item_id},{self.uuid}"
-        self.multicast_soc.send(MessageType.JOIN_AUCTION_REQUEST, message_content)  # Use multicast
-        # #self.unicast_soc.send(MessageType.JOIN_AUCTION_REQUEST, message_content, self.aan_address[0], self.aan_address[1])
-        print(f"Sent JOIN_AUCTION_REQUEST for item {item_id} to AAN")
+        self.multicast_soc.send(MessageType.JOIN_AUCTION_REQUEST, message_content) 
+        print(f"Sent JOIN_AUCTION_REQUEST for item {item_id}")
 
     def place_bid(self, item_id: str, bid_amount: int):
         """
@@ -240,6 +272,7 @@ class Client:
         print(f"Sent BID_REQUEST for item {item_id} with amount {bid_amount} to AAN")
 
 if __name__ == "__main__":
+    # Usage: python client.py <port>
     #myclient: Client = Client(5384)
     if len(sys.argv) != 2:
         print("Usage: python client.py <port>")
