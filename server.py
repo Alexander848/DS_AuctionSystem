@@ -139,52 +139,52 @@ class Server:
 
     def print_info(self) -> None:
         """Prints the server's information to the console."""
-        print(f"\n===== Server Info =====")
-        print(f"UUID: {self.uuid}")
-        print(f"State: {self.state.name}")
-        print(f"IP: {self.ip}")
-        print(f"Port: {self.port}")
-        print(f"INM: {self.inm}")
+        print(f"\n                    ===== Server Info =====")
+        print(f"                    UUID: {self.uuid}")
+        print(f"                    State: {self.state.name}")
+        print(f"                    IP: {self.ip}")
+        print(f"                    Port: {self.port}")
+        print(f"                    INM: {self.inm}")
         # Print only the ports of nodes in the groupview
         groupview_ports = [node.port for node in self.groupview]
-        print(f"Groupview Ports: {groupview_ports}")
+        print(f"                    Groupview Ports: {groupview_ports}")
         # Display running threads
         #print(f"Election in progress: {self.election_in_progress}")
-        print("Running Threads:")
+        print("                    Running Threads:")
         for thread in threading.enumerate():
             if thread != threading.current_thread():  # Exclude the main thread if needed
-                print(f"  - {thread.name} (daemon: {thread.daemon})")
+                print(f"                      - {thread.name} (daemon: {thread.daemon})")
         if self.state == Server.State.AAN:
             if self.pan_node is not None:
-                print(f"PAN: {self.pan_node.uuid} ({self.pan_node.ip}:{self.pan_node.port})")
+                print(f"                    PAN: {self.pan_node.uuid} ({self.pan_node.ip}:{self.pan_node.port})")
             if hasattr(self, 'item_id'):
-                print(f"    Auction Item: {self.item_id}")
+                print(f"                        Auction Item: {self.item_id}")
             if hasattr(self, 'highest_bid'):
-                print(f"    Highest Bid: {self.highest_bid}")
+                print(f"                        Highest Bid: {self.highest_bid}")
             if hasattr(self, 'highest_bidder'):
-                print(f"    Highest Bidder: {self.highest_bidder}")
+                print(f"                        Highest Bidder: {self.highest_bidder}")
             if hasattr(self, 'client_address'):
-                print(f"    Client: {self.client_address}")
+                print(f"                        Client: {self.client_address}")
             if hasattr(self, 'clients'):
-                print(f"    Clients: {self.clients}")
+                print(f"                        Clients: {self.clients}")
             if hasattr(self, 'auction_timer'):
-                print(f"    Time left: {int(self.auction_end_time - time.time())}")
+                print(f"                        Time left: {int(self.auction_end_time - time.time())}")
         elif self.state == Server.State.PAN:
             if self.aan_node is not None:
-                print(f"AAN: {self.aan_node.uuid} ({self.aan_node.ip}:{self.aan_node.port})")
+                print(f"                    AAN: {self.aan_node.uuid} ({self.aan_node.ip}:{self.aan_node.port})")
             if hasattr(self, 'item_id'):
-                print(f"    Auction Item: {self.item_id}")
+                print(f"                        Auction Item: {self.item_id}")
             if hasattr(self, 'highest_bid'):
-                print(f"    Highest Bid: {self.highest_bid}")
+                print(f"                        Highest Bid: {self.highest_bid}")
             if hasattr(self, 'highest_bidder'):
-                print(f"    Highest Bidder: {self.highest_bidder}")
+                print(f"                        Highest Bidder: {self.highest_bidder}")
             if hasattr(self, 'client_address'):
-                print(f"    Client: {self.client_address}")
+                print(f"                        Client: {self.client_address}")
             if hasattr(self, 'clients'):
-                print(f"    Clients: {self.clients}")
+                print(f"                        Clients: {self.clients}")
             if hasattr(self, 'auction_timer'):
-                print(f"    Time left: {int(self.auction_end_time - time.time())}")
-        print(f"=======================\n")
+                print(f"                        Time left: {int(self.auction_end_time - time.time())}")
+        print(f"                    =======================\n")
 
     def periodic_info_print(self) -> None:
         """Periodically prints the server's information."""
@@ -335,6 +335,8 @@ class Server:
 
             # Skip election if currently active in an auction
             if self.state in [Server.State.AAN, Server.State.PAN]:
+                # still update INM TODO: test scenario: auction active, INM fails, INM reassigned, PAN/AAN fails -> need current INM_address for PAN/AAN request
+                self.inm = Server.Node(msg.src_ip, msg.src_port, uuid.UUID(msg.content))
                 print("    [server.py] [Server.message_parser] Skipping DECLARE_INM, currently in active auction role.")
                 return
             # If the message is not from this server, set state to IDLE and update INM
@@ -668,70 +670,44 @@ class Server:
                     return node
         return None
 
-    def get_node_state(self, node: Node) -> State: #TODO: not ideal, has to have own thread, alternative: add state to groupview
+    def get_node_state(self,
+                       node: Node) -> State:  # TODO: does not always work as intended,  e.g.  receive heartbeat messages instead and then goes to else-branch. Alternative with own thread is too slow and leads to bugs
+
         """
-        get_node_state using a separate thread to collect multiple responses.
+        Gets the state of a given node by sending a STATE_QUERY message.
+        Uses a dedicated UnicastSocket for this operation.
         """
-        response_queue = queue.Queue()
+        print(f"  [server.py] [Server.get_node_state] Getting state of node {node.uuid} ({node.ip}:{node.port})")
 
-        def listener_thread():
-            """Thread that listens for responses for a limited time."""
-            end_time = time.time() + 2.5
-            while time.time() < end_time:
-                # Wait up to the remaining time for a response
-                timeout = max(0, end_time - time.time())
-                ready, _, _ = select.select([self.unicast_soc], [], [], timeout)
-                if ready:
-                    try:
-                        response: Message = self.unicast_soc.receive()
-                        # If response matches the criteria, put it in the queue
-                        if response.message_type == MessageType.STATE_RESPONSE:
-                            response_queue.put(response)
-                    except Exception as e:
-                        print(f"Listener encountered error: {e}")
-                        break
+        # Create a new UnicastSocket for this specific request
+        temp_unicast_soc = UnicastSocket(self.port)
 
-        print(f"  [server.py] [Server.get_node_state] Querying state of node {node.uuid} ({node.ip}:{node.port})")
-        try:
-            # Send the STATE_QUERY message
-            self.unicast_soc.send(MessageType.STATE_QUERY, str(self.uuid), node.ip, node.port)
-        except Exception as send_err:
-            print(f"Error sending STATE_QUERY: {send_err}")
-            return Server.State.UNINITIALIZED
+        # Send a STATE_QUERY message to the node
+        temp_unicast_soc.send(MessageType.STATE_QUERY, str(self.uuid), node.ip, node.port)
 
-        # Start listener thread
-        thread = threading.Thread(target=listener_thread, daemon=True)
-        thread.name = "GetNodeStateListenerThread"
-        thread.start()
+        # Wait for a response (with a timeout)
+        ready, _, _ = select.select([temp_unicast_soc], [], [], 2.5)
 
-        # Wait for the listener thread to finish
-        thread.join(timeout=2.6)  # Slightly longer than the listener duration for safety
+        if ready:
+            response: Message = ready[0].receive()
+            # Ensure the response is for this request (if you implement UUID checking)
+            if response.message_type == MessageType.STATE_RESPONSE and response.content.startswith(str(self.uuid)):
+                # Extract the state from the content (assuming format: "requesting_uuid,state")
+                _, state_str = response.content.split(",", 1)
+                print(f"  [server.py] [Server.get_node_state] Received state {state_str} from node {node.uuid}")
+                temp_unicast_soc.close()
+                return Server.State[state_str]  # Convert string back to State enum
+            else:  # TODO: fix the method
+                print(f"  [server.py] [Server.get_node_state] Invalid response {response} from node {node.uuid}")
+                temp_unicast_soc.close()
+                return Server.State.AAN  # TODO: fix the method, removing this return makes it so nodes get removed more than they should, but actually not really a problem?
 
-        # Process collected responses
-        selected_state = Server.State.UNINITIALIZED
-        while not response_queue.empty():
-            response = response_queue.get()
-            try:
-                request_uuid, state_str = response.content.split(",", 1)
-                # Validate that the response matches our original query and state is recognized
-                if request_uuid.strip() == str(self.uuid) and state_str in Server.State.__members__:
-                    # Choose a state based on some criteria, e.g., first valid response or
-                    # more complex selection logic if needed.
-                    selected_state = Server.State[state_str]
-                    print(f"Received valid state {state_str} from node {node.uuid}")
-                    break  # Break after the first valid response if that suffices
-            except Exception as parse_err:
-                print(f"Error parsing response: {parse_err}")
-
-        if selected_state == Server.State.UNINITIALIZED:
-            print(f"No valid state response from node {node.uuid}")
-
-        # If no valid response, remove node from groupview as before
-        if selected_state == Server.State.UNINITIALIZED and node in self.groupview:
+        print(f"  [server.py] [Server.get_node_state] No response from node {node.uuid} within timeout")
+        if node in self.groupview.copy():
             self.groupview.remove(node)
-            self.send_groupview_update()
-
-        return selected_state
+            self.send_groupview_update()  # Send groupview update after removing
+        temp_unicast_soc.close()
+        return Server.State.UNINITIALIZED  # Or some other default state if no response
 
     def initialize_auction(self, item_id: str, client_ip: str, client_port: int) -> None:
         """

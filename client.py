@@ -25,7 +25,7 @@ class Client:
 
         self.unicast_soc: UnicastSocket = UnicastSocket(self.port)
         self.multicast_soc: MulticastSocket = MulticastSocket(self.port)
-        self.inm_address: tuple[str, int] = ("", -1)  # (IP, port) of the INM - still used for responses, might be removed later
+        #self.inm_address: tuple[str, int] = ("", -1)  # (IP, port) of the INM
         # self.inm_unicast_soc: UnicastSocket = None  # Socket for persistent INM connection 
         
         self.listener_thread: threading.Thread = threading.Thread(target=self.listen_for_messages)
@@ -209,27 +209,27 @@ class Client:
 
     def display_client_info(self) -> None:
         """Displays the client's current information."""
-        print("\n===== Client Info =====")
-        print(f"UUID: {self.uuid}")
-        print(f"IP: {self.ip}")
-        print(f"Port: {self.port}")
+        print("\n                    ===== Client Info =====")
+        print(f"                    UUID: {self.uuid}")
+        print(f"                    IP: {self.ip}")
+        print(f"                    Port: {self.port}")
 
         # Check if AAN address is available and display it
         if hasattr(self, 'aan_address') and self.aan_address[1] != -1:
-            print(f"AAN Address: {self.aan_address[0]}:{self.aan_address[1]}")
+            print(f"                    AAN Address: {self.aan_address[0]}:{self.aan_address[1]}")
         else:
-            print("AAN Address: None")
+            print("                    AAN Address: None")
 
         if self.joined_auctions:
-            print("Joined Auctions:")
+            print("                    Joined Auctions:")
             for item_id, auction_data in self.joined_auctions.items():
-                print(f"    Item ID: {item_id}")
-                print(f"    Highest Bid: {auction_data['highest_bid']}")
-                print(f"    Highest Bidder: {auction_data['highest_bidder']}")
+                print(f"                        Item ID: {item_id}")
+                print(f"                        Highest Bid: {auction_data['highest_bid']}")
+                print(f"                        Highest Bidder: {auction_data['highest_bidder']}")
         else:
-            print("Joined Auctions: None")
+            print("                    Joined Auctions: None")
 
-        print("=======================\n")
+        print("                    =======================\n")
 
     def list_items(self):
         """
