@@ -1,5 +1,5 @@
 
-import select
+from queue import Empty
 from typing import Callable, NoReturn
 import uuid
 import time
@@ -73,12 +73,13 @@ class Server:
         self.unicast_soc: UnicastSocket = UnicastSocket(self.port)
 
         # group view consists of list of nodes. keeps track of ip, port and uuid.
-        self.groupview: set[Server.Node] = set([Server.Node(self.ip, self.port, self.uuid)])
-        self.inm: Server.Node | None = Server.Node("", -1, uuid.UUID(int=0))
+        self.groupview: set[Server.Node] = set()
+        self.inm: Server.Node | None = None
         self.pan_node: Server.Node | None = None # Keep track of the assigned PAN
 
         self.inm_thread: Thread = Thread()  # this thread is used as a timeout for election acks
         self.received_ack: bool = False  # this bool is used to communicate with the thread
+        self.state_port: int = 9999  # port for state queries. cannot be used by other server nodes
 
         self.info_thread: Thread = Thread(target=self.periodic_info_print)
         self.info_thread.daemon = True  # Allow the main thread to exit even if this thread is running
@@ -93,8 +94,6 @@ class Server:
         self.HEARTBEAT_TIMEOUT = 2 * self.HEARTBEAT_INTERVAL
         self.heartbeat_counter = 0
         self.GROUPVIEW_UPDATE_HEARTBEAT_INTERVAL = 2  # Send update every 2nd heartbeat
-
-
 
         self.main()
 
@@ -642,44 +641,45 @@ class Server:
                     return node
         return None
 
-    def get_node_state(self,
-                       node: Node) -> State:  # TODO: does not always work as intended,  e.g.  receive heartbeat messages instead and then goes to else-branch. Alternative with own thread is too slow and leads to bugs
-
+    def get_node_state(self, node: Node) -> State:
         """
         Gets the state of a given node by sending a STATE_QUERY message.
         Uses a dedicated UnicastSocket for this operation.
         """
         print(f"  [server.py] [Server.get_node_state] Getting state of node {node.uuid} ({node.ip}:{node.port})")
+        state_socket: UnicastSocket = UnicastSocket(9999)  # Use a separate socket for state queries
+        # send query, then listen for a response for {timeout} seconds
+        state_socket.send(MessageType.STATE_QUERY, str(self.uuid), node.ip, node.port)
+        timeout: float = 1.0
+        start_time: float = time.time()
+        state_socket.delivered.queue.clear()
+        while timeout > 0:
+            try:
+                response: Message = state_socket.delivered.get(block=True, timeout=timeout)
+                print(f"  [server.py] [Server.get_node_state] delivered queue message: {response}")
+                #response: Message = self.state_response.get(block=True, timeout=timeout)
+                if response.message_type == MessageType.STATE_RESPONSE and response.content.startswith(str(self.uuid)):
+                    # Extract the state from the content (assuming format: "requesting_uuid,state")
+                    _, state_str = response.content.split(",", 1)
+                    print(f"  [server.py] [Server.get_node_state] Received state {state_str} from node {node.uuid}")
+                    state_socket.close()
+                    return Server.State[state_str]  # Convert string back to State enum
+                else:
+                    print(f"  [server.py] [Server.get_node_state] Received unexpected message: {response}")
 
-        # Create a new UnicastSocket for this specific request
-        temp_unicast_soc = UnicastSocket(self.port)
+            except Empty:
+                # actual timeout is handled at the end of the function
+                break
+            
+            timeout -= (time.time() - start_time)
+            start_time = time.time()
 
-        # Send a STATE_QUERY message to the node
-        temp_unicast_soc.send(MessageType.STATE_QUERY, str(self.uuid), node.ip, node.port)
-
-        # TODO CHANGE =====================================================================
-        # Wait for a response (with a timeout)
-        ready, _, _ = select.select([temp_unicast_soc], [], [], 2.5)
-
-        if ready:
-            response: Message = ready[0].receive()
-            # Ensure the response is for this request (if you implement UUID checking)
-            if response.message_type == MessageType.STATE_RESPONSE and response.content.startswith(str(self.uuid)):
-                # Extract the state from the content (assuming format: "requesting_uuid,state")
-                _, state_str = response.content.split(",", 1)
-                print(f"  [server.py] [Server.get_node_state] Received state {state_str} from node {node.uuid}")
-                temp_unicast_soc.close()
-                return Server.State[state_str]  # Convert string back to State enum
-            else:  # TODO: fix the method
-                print(f"  [server.py] [Server.get_node_state] Invalid response {response} from node {node.uuid}")
-                temp_unicast_soc.close()
-                return Server.State.AAN  # TODO: fix the method, removing this return makes it so nodes get removed more than they should, but actually not really a problem?
-
+        # handle timeout
         print(f"  [server.py] [Server.get_node_state] No response from node {node.uuid} within timeout")
+        state_socket.close()
         if node in self.groupview.copy():
             self.groupview.remove(node)
             self.send_groupview_update()  # Send groupview update after removing
-        temp_unicast_soc.close()
         return Server.State.UNINITIALIZED  # Or some other default state if no response
 
     def initialize_auction(self, item_id: str, client_ip: str, client_port: int) -> None:
@@ -713,7 +713,10 @@ class Server:
 
         # 2. Request a PAN from INM
         # Send a PAN_REQUEST message to the INM, including the AAN's UUID, IP, and port
-        self.unicast_soc.send(MessageType.PAN_REQUEST, f"{str(self.uuid)},{self.ip},{self.port}", self.inm.ip, self.inm.port)
+        if self.inm is None:
+            print(f"  [server.py] [Server.initialize_auction] No INM available to request PAN.")
+        else:
+            self.unicast_soc.send(MessageType.PAN_REQUEST, f"{str(self.uuid)},{self.ip},{self.port}", self.inm.ip, self.inm.port)
         print(f"  [server.py] [Server.initialize_auction] Sent PAN_REQUEST request to INM (including IP and port)")
 
         # 3. Start Auction Timer
@@ -813,7 +816,7 @@ class Server:
             self.unicast_soc.send(MessageType.JOIN_AUCTION_RESPONSE, "failed", client_ip, client_port)
             print(f"  [server.py] [Server.join_auction] Client {client_uuid} failed to join auction for item {item_id}")
 
-    def replicate_state(self):
+    def replicate_state(self) -> None:
         """
         Sends the current auction state to the PAN (Passive Auctioneer Node).
 
@@ -830,10 +833,13 @@ class Server:
             if remaining_time < 0:  # Ensure remaining_time is not negative
                 remaining_time = 0
             message_content = f"{self.item_id},{self.highest_bid},{self.highest_bidder},{client_list_str},{remaining_time}"
-            self.unicast_soc.send(MessageType.REPLICATE_STATE, message_content, self.pan_node.ip, self.pan_node.port)
+            if self.pan_node == None:
+                print(f"  [server.py] [Server.replicate_state] PAN node is None, cannot replicate state")
+            else:
+                self.unicast_soc.send(MessageType.REPLICATE_STATE, message_content, self.pan_node.ip, self.pan_node.port)
             print(f"  [server.py] [Server.replicate_state] Replicated state to PAN: {message_content}")
 
-    def return_to_idle(self):
+    def return_to_idle(self) -> None:
         """
         Resets the server to the IDLE state and clears auction-related data.
 
@@ -851,7 +857,8 @@ class Server:
         self.item_id = None
         self.clients = []
         self.client_address = None
-        self.highest_bid = None
+        #self.highest_bid = None
+        self.highest_bid = -1
         self.highest_bidder = None
 
         if self.pan_node:  # This was an AAN
@@ -875,7 +882,7 @@ class Server:
                 self.inm_thread.start()
                 return
 
-    def finalize_auction(self):
+    def finalize_auction(self) -> None:
         """
         As AAN: Finalizes the auction process and notifies participants.
         """
@@ -893,7 +900,7 @@ class Server:
         # 3. Reset AAN State
         self.return_to_idle()
 
-    def start_heartbeat_thread(self):
+    def start_heartbeat_thread(self) -> None:
         """Start a single persistent heartbeat thread if not already running."""
         print(f"  [server.py] [Server.start_heartbeat_thread] Starting heartbeat thread")
         if self._heartbeat_thread is None or not self._heartbeat_thread.is_alive():
@@ -902,7 +909,7 @@ class Server:
             self._heartbeat_thread.daemon = True
             self._heartbeat_thread.start()
 
-    def stop_heartbeat_thread(self):
+    def stop_heartbeat_thread(self) -> None:
         """Signal the heartbeat thread to stop and wait for it to finish."""
         print(f"  [server.py] [Server.stop_heartbeat_thread] Stopping heartbeat thread")
         self._heartbeat_stop_event.set()
@@ -910,7 +917,7 @@ class Server:
             self._heartbeat_thread.join()
         self._heartbeat_thread = None
 
-    def heartbeat_loop(self):
+    def heartbeat_loop(self) -> None:
         """Single loop that sends heartbeats based on the server's state."""
         while not self._heartbeat_stop_event.is_set():
             # INM state: send heartbeat to idle nodes
@@ -929,7 +936,7 @@ class Server:
             # Sleep for heartbeat interval or check stop condition more frequently if needed
             self._heartbeat_stop_event.wait(self.HEARTBEAT_INTERVAL)
 
-    def send_heartbeats_to_idle_nodes_once(self):
+    def send_heartbeats_to_idle_nodes_once(self) -> None:
         """
         Sends heartbeat messages to all nodes in the groupview.
         
@@ -984,7 +991,7 @@ class Server:
             print(f"  [server.py] [Server.send_heartbeats_to_idle_nodes_once] Broadcasting updated groupview to all nodes.")
             self.send_groupview_update()
 
-    def send_heartbeats_to_inm_once(self):
+    def send_heartbeats_to_inm_once(self) -> None:
         """
         Sends a heartbeat message to the current INM.
 
@@ -992,7 +999,7 @@ class Server:
         If the INM is unreachable or unresponsive (determined by heartbeat timeout),
         it initiates an election process if this node has the highest UUID among remaining idle nodes.
         """
-        print(f"  [server.py] [Server.send_heartbeats_to_inm_once] Sending heartbeat to INM")
+        print(f"    [server.py] [Server.send_heartbeats_to_inm_once] Sending heartbeat to INM")
         # If this node is the INM, ensure the state reflects this
         if self.inm and self.inm.uuid == self.uuid:
             print(f"  [server.py] [Server.send_heartbeats_to_inm_once] Forcing state update to INM")
@@ -1073,7 +1080,7 @@ class Server:
             self.inm_thread.start()
             print("INM not set or invalid; skipping heartbeat send.")
 
-    def send_heartbeats_to_pan_once(self):
+    def send_heartbeats_to_pan_once(self) -> None:
         """Sends a heartbeat to the PAN and requests a new PAN if no response is received within the timeout."""
         if self.pan_node:
             try:
@@ -1088,7 +1095,7 @@ class Server:
                 print(f"  [server.py] [Server.send_heartbeats_to_pan_once] PAN heartbeat timeout")
                 self.request_new_pan()
 
-    def send_heartbeats_to_aan_once(self):
+    def send_heartbeats_to_aan_once(self) -> None:
         """Sends a heartbeat to the AAN and promotes to AAN if no response is received within the timeout."""
         print(f"  [server.py] [Server.send_heartbeats_to_aan_once] Sending heartbeat to AAN")
 
@@ -1102,7 +1109,7 @@ class Server:
                 print(f"  [server.py] [Server.send_heartbeats_to_aan_once] AAN heartbeat timeout")
                 self.promote_to_aan()
 
-    def promote_to_aan(self):
+    def promote_to_aan(self) -> None:
         """Handles the PAN's transition to AAN upon AAN failure."""
         print(f"  [server.py] [Server.promote_to_aan] PAN {self.uuid} promoting to AAN")
 
@@ -1120,15 +1127,18 @@ class Server:
         # Request a new PAN from the INM
         self.request_new_pan()
 
-    def request_new_pan(self):
+    def request_new_pan(self) -> None:
         """
         Requests a new PAN from the INM. Sends a PAN_REQUEST message to the INM containing the AAN's UUID, IP, and port.
         """
         if self.state == Server.State.AAN:
-            self.unicast_soc.send(MessageType.PAN_REQUEST, f"{str(self.uuid)},{self.ip},{self.port}", self.inm.ip, self.inm.port)
+            if self.inm == None:
+                print(f"  [server.py] [Server.request_new_pan] No INM available to request PAN.")
+            else:
+                self.unicast_soc.send(MessageType.PAN_REQUEST, f"{str(self.uuid)},{self.ip},{self.port}", self.inm.ip, self.inm.port)
             print(f"  [server.py] [Server.request_new_pan] Sent PAN_REQUEST request to INM (including IP and port)")
 
-    def send_groupview_update(self):
+    def send_groupview_update(self) -> None:
         """Sends the current groupview to all nodes in the group. Only applicable to the INM server."""
         if self.state == Server.State.INM:
             # Construct the groupview string: "ip:port:uuid;ip:port:uuid;..."

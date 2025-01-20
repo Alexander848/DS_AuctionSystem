@@ -67,7 +67,7 @@ class MulticastSocket(socket.socket):
                 continue
 
             self.received.put(message)
-            print(f"Received: {message}")
+            #print(f"Received: {message}")
 
     
     def __deliver(self) -> NoReturn:
@@ -79,7 +79,7 @@ class MulticastSocket(socket.socket):
         while True:
             message: Message = self.received.get()
             self.delivered.put(message)
-            print(f"Delivered: {message}")
+            #print(f"Delivered: {message}")
 
 
     # overrides parents method

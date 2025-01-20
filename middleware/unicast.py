@@ -67,15 +67,15 @@ class UnicastSocket(socket.socket):
             
             # handle acks
             if message.message_type is MessageType.UNICAST_ACK:
-                print(f"Received ack: {message}")
+                #print(f"Received ack: {message}")
                 self.wait_acknowledge.append(message.message_id)
                 continue
 
             self.received.put(message)
-            print(f"Received: {message}")
+            #print(f"Received: {message}")
             # send ack back
             ack_message: Message = Message(MessageType.UNICAST_ACK, "", self.ip, self.port, message.message_id)
-            print(f"Sending Ack: {ack_message}")
+            #print(f"Sending Ack: {ack_message}")
             self.sendto(str(ack_message).encode("utf-8"), (message.src_ip, message.src_port))
 
     
@@ -88,7 +88,7 @@ class UnicastSocket(socket.socket):
         while True:
             message: Message = self.received.get()
             self.delivered.put(message)
-            print(f"Delivered: {message}")
+            #print(f"Delivered: {message}")
 
 
     def __thread_send(self, message_type: MessageType, content: str, target_ip: str, target_port: int, ack_timeout: float, message_retries: int) -> None:
@@ -100,7 +100,7 @@ class UnicastSocket(socket.socket):
             message_retries -= 1
             message: Message = Message(message_type, content, self.ip, self.port, message_uuid)
             target_addr: tuple[str, int] = (target_ip, target_port)
-            print(f"Sending: {message}")
+            #print(f"Sending: {message}")
             self.sendto(str(message).encode("utf-8"), target_addr)
 
             # handle ack
