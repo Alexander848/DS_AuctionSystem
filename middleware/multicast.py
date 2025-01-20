@@ -14,7 +14,6 @@ IDLE_GRP_IP = '224.1.1.1'
 IDLE_GRP_PORT = 5382
 MULTICAST_TTL = 2
 
-
 class MulticastSocket(socket.socket):
 
     def __init__(self, self_port: int, group_ip: str=IDLE_GRP_IP, group_port: int=IDLE_GRP_PORT, ttl: int=MULTICAST_TTL) -> None:

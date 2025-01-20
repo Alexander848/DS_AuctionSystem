@@ -129,20 +129,3 @@ class UnicastSocket(socket.socket):
         sending_thread: Thread = Thread(target=self.__thread_send, args=(message_type, content, target_ip, target_port, ack_timeout, message_retries))
         sending_thread.start()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

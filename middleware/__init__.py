@@ -1,10 +1,7 @@
-
-
 # implements communication
 # ack
 # heartbeat
 # detect failures
-
 
 from enum import Enum
 import socket
@@ -12,13 +9,39 @@ from uuid import UUID
 
 
 class MessageType(Enum):
+
     TEST = "TEST"                       # test message
     UUID_QUERY = "UUID_QUERY"           # unicast to send UUID
-    UUID_ANSWER = "UUID_ANSWER"         # unicast to send UUID
+    UUID_ANSWER = "UUID_ANSWER"           # unicast to send UUID
     ELECTION_START = "ELECTION_START"   # starts an election. election message.
     ELECTION_ACK = "ELECTION_ACK"       # acknowledges. ok/alive message.
     DECLARE_INM = "DECLARE_INM"         # declares the sender to be the INM. coordination message.
     INM_ANSWER = "INM_ANSWER"           # INM response to get INM address
+    LIST_ITEMS_REQUEST = "LIST_ITEMS_REQUEST"
+    LIST_ITEMS_RESPONSE = "LIST_ITEMS_RESPONSE"
+    CONNECT_REQUEST = "CONNECT_REQUEST"
+    CONNECT_RESPONSE = "CONNECT_RESPONSE"
+    START_AUCTION_REQUEST = "START_AUCTION_REQUEST"
+    START_AUCTION_RESPONSE = "START_AUCTION_RESPONSE"
+    AUCTION_INIT = "AUCTION_INIT"
+    PAN_REQUEST = "PAN_REQUEST"
+    PAN_RESPONSE = "PAN_RESPONSE"
+    STATE_QUERY = "STATE_QUERY"
+    STATE_RESPONSE = "STATE_RESPONSE"
+    PAN_FAILURE = "PAN_FAILURE"
+    JOIN_AUCTION_REQUEST = "JOIN_AUCTION_REQUEST"
+    JOIN_AUCTION_RESPONSE = "JOIN_AUCTION_RESPONSE"
+    REPLICATE_STATE = "REPLICATE_STATE"
+    BID_REQUEST = "BID_REQUEST"
+    BID_RESPONSE = "BID_RESPONSE"
+    PAN_INFO = "PAN_INFO"
+    LIST_ITEMS_FROM_AAN_REQUEST = "LIST_ITEMS_FROM_AAN_REQUEST"
+    AUCTION_END = "AUCTION_END"
+    HEARTBEAT_REQUEST = "HEARTBEAT_REQUEST"
+    HEARTBEAT_RESPONSE = "HEARTBEAT_RESPONSE"
+    REMOVE_NODE = "REMOVE_NODE"
+    GROUPVIEW_UPDATE = "GROUPVIEW_UPDATE"  # New message type for groupview updates
+    REPLICATE_STATE_REQUEST = "REPLICATE_STATE_REQUEST"
     UNICAST_ACK = "UNICAST_ACK"         # ack for unicast message
 
 
@@ -44,22 +67,3 @@ def get_my_ip() -> str:
         cached_ip = s.getsockname()[0]
         s.close()
     return cached_ip
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
