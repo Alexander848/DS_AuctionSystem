@@ -72,6 +72,9 @@ class Server:
         self.idle_grp_sock: MulticastSocket = MulticastSocket(self.port)
         self.unicast_soc: UnicastSocket = UnicastSocket(self.port)
 
+        # Once set to true, stops all threads
+        self.stop_execution : bool = False
+
         # group view consists of list of nodes. keeps track of ip, port and uuid.
         self.groupview: set[Server.Node] = set()
         self.inm: Server.Node | None = None
@@ -192,6 +195,14 @@ class Server:
         while True:
             self.print_info()
             time.sleep(5)
+            # stops heartbeat thread and sends message to stop uni/multicast receive/deliver threads
+            # and message parser thread
+            if self.stop_execution:
+                self.stop_heartbeat_thread()
+                self.unicast_soc.send(MessageType.TEST_STOP_EXECUTION, "test", self.ip, self.port)
+                self.idle_grp_sock.send(MessageType.TEST_STOP_EXECUTION, str(self.ip) + "," + str(self.port))
+                return
+
 
     def get_available_items_from_api(self) -> list[dict[str, int | str]]:
         # Here, we just return the simple item_data list
@@ -257,10 +268,18 @@ class Server:
         Continuously listens for messages from the network.
         Messages are then parsed and forwarded to the correct handler.
         """
-        # wait for a message to be processed
         while True:
+            # wait for a message to be processed
             msg: Message = listen_sock.delivered.get()
             print(f"parsing {msg}")
+
+            # stops messageParser Thread and uni/multicast deliver/receive threads
+            if self.stop_execution is True:
+                if msg.message_type is not MessageType.TEST_STOP_EXECUTION:
+                    continue
+                else:
+                    return
+
             if msg.message_type == MessageType.UUID_QUERY:
                 print(f"    [server.py] [Server.message_parser] Received UUID_QUERY from {msg.src_ip}:{msg.src_port}")
 

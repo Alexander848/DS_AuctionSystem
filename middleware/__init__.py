@@ -11,6 +11,7 @@ from uuid import UUID
 class MessageType(Enum):
 
     TEST = "TEST"                       # test message
+    TEST_STOP_EXECUTION = "TEST_STOP_EXECUTION" # used to stop delivery threads
     UUID_QUERY = "UUID_QUERY"           # unicast to send UUID
     UUID_ANSWER = "UUID_ANSWER"           # unicast to send UUID
     ELECTION_START = "ELECTION_START"   # starts an election. election message.
