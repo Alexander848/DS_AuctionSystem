@@ -3,7 +3,6 @@ import random
 import socket
 import time
 import uuid
-from typing import NoReturn
 from queue import Queue
 
 from middleware import MessageType
@@ -27,6 +26,7 @@ class UnicastSocket(socket.socket):
     def __init__(self, port: int) -> None:
         self.ip = get_my_ip()
         self.port = port
+        self.stop_execution = False
 
         super().__init__(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, True)
@@ -44,7 +44,7 @@ class UnicastSocket(socket.socket):
         self.thread_deliver.start()
 
 
-    def __receive(self, buffsize: int=1024, network_failure_rate: float=0.0) -> NoReturn:
+    def __receive(self, buffsize: int=1024, network_failure_rate: float=0.0) -> None:
         """
         This function handles the direct incoming messages. Further message logic goes through the received queue.
         Can simulate network failures by dropping messages with a certain probability (float between 0.0, no failures, to 1.0).
@@ -59,6 +59,12 @@ class UnicastSocket(socket.socket):
 
             data: list[str] = raw.decode("utf-8").split(" ")
             message: Message = Message(MessageType(data[0]), data[1], data[2], int(data[3]), uuid.UUID(data[4]))
+
+            # stops receive and deliver thread
+            if message.message_type is MessageType.TEST_STOP_EXECUTION:
+                self.stop_execution = True
+                self.received.put(message)
+                return
             
             # deduplicate messages
             if message.message_id in self.dedupe:
@@ -79,7 +85,7 @@ class UnicastSocket(socket.socket):
             self.sendto(str(ack_message).encode("utf-8"), (message.src_ip, message.src_port))
 
     
-    def __deliver(self) -> NoReturn:
+    def __deliver(self) -> None:
         """
         This function will be used to implement FIFO channels.
         Not yet implemented.
@@ -87,6 +93,10 @@ class UnicastSocket(socket.socket):
         # TODO implement FIFO channels
         while True:
             message: Message = self.received.get()
+            if self.stop_execution:
+                self.received.queue.clear()
+                self.delivered.queue.clear()
+                return
             self.delivered.put(message)
             #print(f"Delivered: {message}")
 
@@ -129,3 +139,9 @@ class UnicastSocket(socket.socket):
         sending_thread: Thread = Thread(target=self.__thread_send, args=(message_type, content, target_ip, target_port, ack_timeout, message_retries), name="unicast-sending")
         sending_thread.start()
 
+    def close(self) -> None:
+        message: Message = Message(MessageType.TEST_STOP_EXECUTION, "", self.ip, self.port, uuid.uuid4())
+        self.sendto(str(message).encode("utf-8"), (self.ip, self.port))
+        self.thread_receive.join()
+        self.thread_deliver.join()
+        super().close()

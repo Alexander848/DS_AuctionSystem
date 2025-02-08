@@ -4,7 +4,6 @@ import socket
 import uuid
 from queue import Queue
 from threading import Thread
-from typing import NoReturn
 from middleware import get_my_ip
 from middleware import Message
 from middleware import MessageType
@@ -21,9 +20,10 @@ class MulticastSocket(socket.socket):
         self.group_ip = group_ip
         self.group_port = group_port
         self.ttl = ttl
-        # for respondses with unicast we need to send our own ip and port
+        # for responses with unicast we need to send our own ip and port
         self.ip = get_my_ip()
         self.port = self_port
+        self.stop_execution = False
 
         super().__init__(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, True)
@@ -44,7 +44,7 @@ class MulticastSocket(socket.socket):
         self.thread_deliver.start()
 
 
-    def __receive(self, buffsize: int=1024, network_failure_rate: float=0.0) -> NoReturn:
+    def __receive(self, buffsize: int=1024, network_failure_rate: float=0.0) -> None:
         """
         This function handles the direct incoming messages. Further message logic goes through the received queue.
         Can simulate network failures by dropping messages with a certain probability (float between 0.0, no failures, to 1.0).
@@ -60,17 +60,25 @@ class MulticastSocket(socket.socket):
 
             data: list[str] = raw.decode("utf-8").split(" ")
             message: Message = Message(MessageType(data[0]), data[1], data[2], int(data[3]), uuid.UUID(data[4]))
-            
+
+            # stops receive and deliver thread
+            if message.message_type is MessageType.TEST_STOP_EXECUTION:
+                message_content = data[1].split(",")
+                if message_content[0] == str(self.ip) and message_content[1] == str(self.port):
+                    self.stop_execution = True
+                    self.received.put(message)
+                    return
+
             # deduplicate messages
             if message.message_id in self.dedupe:
-                print("Recieved duplicate message")
+                print("Received duplicate message")
                 continue
 
             self.received.put(message)
             #print(f"Received: {message}")
 
     
-    def __deliver(self) -> NoReturn:
+    def __deliver(self) -> None:
         """
         This function will be used to implement FIFO and/or causal ordering.
         Not yet implemented.
@@ -80,6 +88,8 @@ class MulticastSocket(socket.socket):
             message: Message = self.received.get()
             self.delivered.put(message)
             #print(f"Delivered: {message}")
+            if self.stop_execution:
+                return
 
 
     # overrides parents method
