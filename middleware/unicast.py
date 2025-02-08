@@ -38,8 +38,8 @@ class UnicastSocket(socket.socket):
         self.delivered: Queue[Message] = Queue(maxsize=0)      # Used by the server to get messages ready to be processed.
 
         # using threads to asynchronously receive and deliver messages
-        self.thread_receive = Thread(target=self.__receive)
-        self.thread_deliver = Thread(target=self.__deliver)
+        self.thread_receive = Thread(target=self.__receive, daemon=True, name="unicast-receive")
+        self.thread_deliver = Thread(target=self.__deliver, daemon=True, name="unicast-deliver")
         self.thread_receive.start()
         self.thread_deliver.start()
 
@@ -126,6 +126,6 @@ class UnicastSocket(socket.socket):
         # TODO fifo
         ack_timeout: float = 0.5
         message_retries: int = 3
-        sending_thread: Thread = Thread(target=self.__thread_send, args=(message_type, content, target_ip, target_port, ack_timeout, message_retries))
+        sending_thread: Thread = Thread(target=self.__thread_send, args=(message_type, content, target_ip, target_port, ack_timeout, message_retries), name="unicast-sending")
         sending_thread.start()
 

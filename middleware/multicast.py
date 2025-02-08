@@ -38,8 +38,8 @@ class MulticastSocket(socket.socket):
         self.delivered: Queue[Message] = Queue(maxsize=0)      # Used by the server to get messages ready to be processed.
 
         # using threads to asynchronously receive and deliver messages
-        self.thread_receive = Thread(target=self.__receive)
-        self.thread_deliver = Thread(target=self.__deliver)
+        self.thread_receive = Thread(target=self.__receive, name="multicast-receive")
+        self.thread_deliver = Thread(target=self.__deliver, name="multicast-deliver")
         self.thread_receive.start()
         self.thread_deliver.start()
 

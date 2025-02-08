@@ -1,5 +1,5 @@
 
-from queue import Empty
+from queue import Empty#, Queue
 from typing import Callable, NoReturn
 import uuid
 import time
@@ -94,6 +94,8 @@ class Server:
         self.HEARTBEAT_TIMEOUT = 2 * self.HEARTBEAT_INTERVAL
         self.heartbeat_counter = 0
         self.GROUPVIEW_UPDATE_HEARTBEAT_INTERVAL = 2  # Send update every 2nd heartbeat
+
+        #self.state_response_queue: Queue[Message] = Queue()
 
         self.main()
 
@@ -341,6 +343,10 @@ class Server:
                 response_content = f"{msg.content},{self.state.name}"
                 self.unicast_soc.send(MessageType.STATE_RESPONSE, response_content, msg.src_ip, msg.src_port)
 
+            #elif msg.message_type == MessageType.STATE_RESPONSE:
+            #    print(f"    [server.py] [Server.message_parser] Received STATE_RESPONSE from {msg.src_ip}:{msg.src_port}")
+            #    self.state_response_queue.put(msg)
+
             elif msg.message_type == MessageType.LIST_ITEMS_REQUEST:
                 print(f"    [server.py] [Server.message_parser] Received LIST_ITEMS_REQUEST from {msg.src_ip}:{msg.src_port}")
 
@@ -584,7 +590,7 @@ class Server:
                     print(f"    [server.py] [Server.message_parser] Updated groupview: {self.groupview}")
 
             else:
-                print(f"     [server.py] [Server.message_parser] ERROR: Unknown message: {msg}")
+                print(f"     [server.py] [Server.message_parser] ERROR: Unknown message: {msg}, {type(listen_sock)}")
 
     def start_auction(self, item_id: str, client_ip: str, client_port: int) -> None:
         """
@@ -632,8 +638,8 @@ class Server:
         print(f"  [server.py] [Server.select_idle_node] Selecting an Idle Node")
         for node in self.groupview.copy(): # .copy to avoid runtimeerror
             # Iterate through the groupview set
-            print(f"  [server.py] [Server.select_idle_node] Checking node {node}")
             if node.uuid != self.uuid:  # Skip the current node itself
+                print(f"  [server.py] [Server.select_idle_node] Checking node {node}")
                 # Check the state of each node in groupview using self.get_node_state
                 node_state = self.get_node_state(node)
                 print(f"  [server.py] [Server.select_idle_node] node state is {node_state}")
@@ -652,7 +658,6 @@ class Server:
         state_socket.send(MessageType.STATE_QUERY, str(self.uuid), node.ip, node.port)
         timeout: float = 1.0
         start_time: float = time.time()
-        state_socket.delivered.queue.clear()
         while timeout > 0:
             try:
                 response: Message = state_socket.delivered.get(block=True, timeout=timeout)

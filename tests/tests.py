@@ -85,24 +85,10 @@ if __name__ == "__main__":
     test5()
 
 
-# paste into cli:
-# python -c "import server; server.Server(5384, set_uuid=1)"
-# python -c "import server; server.Server(5385, set_uuid=2)"
-# python -c "import server; server.Server(5386, set_uuid=3)"
+# server:
+# python -c "import server; server.Server(5001, set_uuid=1)"
+# python -c "import server; server.Server(5002, set_uuid=2)"
+# python -c "import server; server.Server(5003, set_uuid=3)"
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# client:
+#python client.py 6001
