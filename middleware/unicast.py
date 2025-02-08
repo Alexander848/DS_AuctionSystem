@@ -3,7 +3,6 @@ import random
 import socket
 import time
 import uuid
-from typing import NoReturn
 from queue import Queue
 
 from middleware import MessageType
@@ -45,7 +44,7 @@ class UnicastSocket(socket.socket):
         self.thread_deliver.start()
 
 
-    def __receive(self, buffsize: int=1024, network_failure_rate: float=0.0) -> NoReturn:
+    def __receive(self, buffsize: int=1024, network_failure_rate: float=0.0) -> None:
         """
         This function handles the direct incoming messages. Further message logic goes through the received queue.
         Can simulate network failures by dropping messages with a certain probability (float between 0.0, no failures, to 1.0).
@@ -86,7 +85,7 @@ class UnicastSocket(socket.socket):
             self.sendto(str(ack_message).encode("utf-8"), (message.src_ip, message.src_port))
 
     
-    def __deliver(self) -> NoReturn:
+    def __deliver(self) -> None:
         """
         This function will be used to implement FIFO channels.
         Not yet implemented.
@@ -94,10 +93,12 @@ class UnicastSocket(socket.socket):
         # TODO implement FIFO channels
         while True:
             message: Message = self.received.get()
+            if self.stop_execution:
+                self.received.queue.clear()
+                self.delivered.queue.clear()
+                return
             self.delivered.put(message)
             #print(f"Delivered: {message}")
-            if self.stop_execution:
-                return
 
 
     def __thread_send(self, message_type: MessageType, content: str, target_ip: str, target_port: int, ack_timeout: float, message_retries: int) -> None:
@@ -138,3 +139,9 @@ class UnicastSocket(socket.socket):
         sending_thread: Thread = Thread(target=self.__thread_send, args=(message_type, content, target_ip, target_port, ack_timeout, message_retries))
         sending_thread.start()
 
+    def close(self) -> None:
+        message: Message = Message(MessageType.TEST_STOP_EXECUTION, "", self.ip, self.port, uuid.uuid4())
+        self.sendto(str(message).encode("utf-8"), (self.ip, self.port))
+        self.thread_receive.join()
+        self.thread_deliver.join()
+        super().close()

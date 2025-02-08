@@ -4,7 +4,6 @@ import socket
 import uuid
 from queue import Queue
 from threading import Thread
-from typing import NoReturn
 from middleware import get_my_ip
 from middleware import Message
 from middleware import MessageType
@@ -45,7 +44,7 @@ class MulticastSocket(socket.socket):
         self.thread_deliver.start()
 
 
-    def __receive(self, buffsize: int=1024, network_failure_rate: float=0.0) -> NoReturn:
+    def __receive(self, buffsize: int=1024, network_failure_rate: float=0.0) -> None:
         """
         This function handles the direct incoming messages. Further message logic goes through the received queue.
         Can simulate network failures by dropping messages with a certain probability (float between 0.0, no failures, to 1.0).
@@ -79,7 +78,7 @@ class MulticastSocket(socket.socket):
             #print(f"Received: {message}")
 
     
-    def __deliver(self) -> NoReturn:
+    def __deliver(self) -> None:
         """
         This function will be used to implement FIFO and/or causal ordering.
         Not yet implemented.
