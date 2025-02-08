@@ -392,7 +392,7 @@ class Server:
 
                 # If this server is the INM, start an auction for the requested item
                 if self.state == Server.State.INM:
-                    self.start_auction(msg.content, msg.src_ip, msg.src_port)
+                    self.start_auction(int(msg.content), msg.src_ip, msg.src_port)
 
             elif msg.message_type == MessageType.AUCTION_INIT:
                 print(f"    [server.py] [Server.message_parser] Received AUCTION_INIT from {msg.src_ip}:{msg.src_port}")
@@ -611,7 +611,7 @@ class Server:
             else:
                 print(f"     [server.py] [Server.message_parser] ERROR: Unknown message: {msg}, {type(listen_sock)}")
 
-    def start_auction(self, item_id: str, client_ip: str, client_port: int) -> None:
+    def start_auction(self, item_id: int, client_ip: str, client_port: int) -> None:
         """
         Handles the START_AUCTION_REQUEST when the server is the INM.
 
@@ -627,6 +627,17 @@ class Server:
         """
         print(f"  [server.py] [Server.start_auction] Received START_AUCTION_REQUEST for item '{item_id}' from {client_ip}:{client_port}")
 
+        # only positive numbers allowed
+        if item_id < 0:
+            print(f"  [server.py] [Server.start_auction] Invalid item ID: {item_id}")
+            self.unicast_soc.send(MessageType.START_AUCTION_RESPONSE, "ERROR:InvaliditemID", client_ip, client_port)
+            return
+        # item has to be in store
+        if item_id not in [item['itemID'] for item in self.get_available_items_from_api()]:
+            print(f"  [server.py] [Server.start_auction] Item '{item_id}' not found in available items.")
+            self.unicast_soc.send(MessageType.START_AUCTION_RESPONSE, "ERROR:Itemnotavailableforstart", client_ip, client_port)
+            return            
+
         # 1. Select an Idle Node as AAN
         aan_node = self.select_idle_node()
 
@@ -635,6 +646,10 @@ class Server:
             self.unicast_soc.send(MessageType.START_AUCTION_RESPONSE, "ERROR:Noidlenodesavailable", client_ip, client_port)
             return
         print(f"  [server.py] [Server.start_auction] Selected {aan_node} as AAN")
+
+        # successfully found a aan. mark the item as not available anymore
+        self.item_data[item_id - 1]['itemID'] = -1
+
         # 2. Inform the Chosen Node that it's the AAN
         auction_data = f"{item_id},{client_ip},{client_port}"  # Include client address for communication
         self.unicast_soc.send(MessageType.AUCTION_INIT, auction_data, aan_node.ip, aan_node.port)
