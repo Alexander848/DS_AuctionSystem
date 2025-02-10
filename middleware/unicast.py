@@ -68,29 +68,28 @@ class UnicastSocket(socket.socket):
             
             # deduplicate messages
             if message.message_id in self.dedupe:
-                print("Recieved duplicate message")
                 continue
+            else:
+                self.dedupe.append(message.message_id)
             
             # handle acks
             if message.message_type is MessageType.UNICAST_ACK:
                 #print(f"Received ack: {message}")
-                self.wait_acknowledge.append(message.message_id)
+                self.wait_acknowledge.remove(message.message_id)
                 continue
 
-            self.received.put(message)
-            #print(f"Received: {message}")
             # send ack back
             ack_message: Message = Message(MessageType.UNICAST_ACK, "", self.ip, self.port, message.message_id)
-            #print(f"Sending Ack: {ack_message}")
+            #print(f"received message {message}\nSending Ack: {ack_message}")
             self.sendto(str(ack_message).encode("utf-8"), (message.src_ip, message.src_port))
+            
+            self.received.put(message)
 
     
     def __deliver(self) -> None:
         """
-        This function will be used to implement FIFO channels.
-        Not yet implemented.
+        This function can be used to implement FIFO channels.
         """
-        # TODO implement FIFO channels
         while True:
             message: Message = self.received.get()
             if self.stop_execution:
@@ -106,6 +105,7 @@ class UnicastSocket(socket.socket):
         This function is used for sending threads to asynchronously send messages and await the respective ack.
         """
         message_uuid: uuid.UUID = uuid.uuid4()
+        self.wait_acknowledge.append(message_uuid)
         while message_retries > 0:
             message_retries -= 1
             message: Message = Message(message_type, content, self.ip, self.port, message_uuid)
@@ -115,11 +115,10 @@ class UnicastSocket(socket.socket):
 
             # handle ack
             time.sleep(ack_timeout)
-            if message.message_id in self.wait_acknowledge:
-                # correct Ack received, exit function
-                self.wait_acknowledge.remove(message.message_id)
+            if message.message_id not in self.wait_acknowledge:
+                # correct Ack already received, exit function
                 return
-        # no ack after 3 trys: throw an error. Couldn't reach receiver TODO errorhandling
+        # no ack after 3 trys: throw an error. Couldn't reach receiver
 
 
     # overrides parents method
@@ -129,15 +128,14 @@ class UnicastSocket(socket.socket):
         can be reached from any other node, but packages can be dropped at any time). 
         Assume synchronous communication (upper bounds for message transition times).
         Aim for exactly once semantics: retry + deduplication or retry + idempotency
-        of messages. 
-        We want at least FIFO channels -> logical timestamps/sequence numbers.
+        of messages.
         Ack message is the sent message send back.
         """
-        # TODO fifo
         ack_timeout: float = 0.5
         message_retries: int = 3
         sending_thread: Thread = Thread(target=self.__thread_send, args=(message_type, content, target_ip, target_port, ack_timeout, message_retries), name="unicast-sending")
         sending_thread.start()
+
 
     def close(self) -> None:
         message: Message = Message(MessageType.TEST_STOP_EXECUTION, "", self.ip, self.port, uuid.uuid4())

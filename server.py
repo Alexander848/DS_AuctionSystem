@@ -202,7 +202,7 @@ class Server:
             if self.stop_execution:
                 self.stop_heartbeat_thread()
                 self.unicast_soc.send(MessageType.TEST_STOP_EXECUTION, "test", self.ip, self.port)
-                self.idle_grp_sock.send(MessageType.TEST_STOP_EXECUTION, str(self.ip) + "," + str(self.port))
+                self.idle_grp_sock.send(MessageType.TEST_STOP_EXECUTION, str(self.ip) + "," + str(self.port))   # no ack because this is for testing purposes only
                 return
 
 
@@ -217,7 +217,7 @@ class Server:
         Server.Node entries.
         """
         print(f"  [server.py] [Server.dynamic_discovery]")
-        self.idle_grp_sock.send(MessageType.UUID_QUERY, str(self.uuid))
+        self.idle_grp_sock.send(MessageType.UUID_QUERY, str(self.uuid))     # dynamic discovery, acknowledged by UUID_ANSWER
         print(f"  [server.py] [Server.dynamic_discovery] Collecting UUID_QUERY...")
         time.sleep(1.0) # collect responses for 1 second
         responses: list[Message] = list(self.unicast_soc.delivered.queue)
@@ -265,7 +265,7 @@ class Server:
         # Election is finished (this node is INM)
         self.election_in_progress = False
 
-    def message_parser(self, listen_sock: UnicastSocket | MulticastSocket) -> NoReturn:
+    def message_parser(self, listen_sock: UnicastSocket | MulticastSocket) -> NoReturn | None:
         """
         Continuously listens for messages from the network.
         Messages are then parsed and forwarded to the correct handler.
@@ -273,7 +273,7 @@ class Server:
         while True:
             # wait for a message to be processed
             msg: Message = listen_sock.delivered.get()
-            print(f"parsing {msg}")
+            #print(f"parsing {msg}")
 
             # stops messageParser Thread and uni/multicast deliver/receive threads
             if self.stop_execution is True:
@@ -289,6 +289,9 @@ class Server:
                 self.groupview.add(Server.Node(msg.src_ip, msg.src_port, uuid.UUID(msg.content)))
                 # Send the UUID back to the requester
                 self.unicast_soc.send(MessageType.UUID_ANSWER, str(self.uuid), msg.src_ip, msg.src_port)
+
+            elif msg.message_type == MessageType.UUID_ANSWER:
+                print(f"    [server.py] [Server.message_parser] Received UUID_ANSWER from {msg.src_ip}:{msg.src_port}")
 
             elif msg.message_type == MessageType.ELECTION_START:
                 print(f"    [server.py] [Server.message_parser] Received ELECTION_START from {msg.src_ip}:{msg.src_port}")
@@ -906,10 +909,7 @@ class Server:
             self.aan_node = None
 
         # make it return to idle pool in groupview
-        # TODO: trigger election? if INM is changed to a lower port while auction was active
-        #self.dynamic_discovery()
         # Check if the current node has the actual highest UUID, if so, trigger an election
-        # TODO: could be buggy, test further?
         if self.groupview:
             highest_uuid = max(node.uuid for node in self.groupview)
             if self.uuid == highest_uuid:

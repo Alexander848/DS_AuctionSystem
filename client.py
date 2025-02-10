@@ -46,7 +46,7 @@ class Client:
         """
         while True:
             # removed connect from input
-            command = input("Enter command (info, list, start <item_id>, join <item_id>, bid <item_id> <amount>, exit): \n")
+            command = input("Enter command (list, start <item_id>, join <item_id>, bid <item_id> <amount>, exit): \n")
             command_parts = command.split()
     
             if command_parts:

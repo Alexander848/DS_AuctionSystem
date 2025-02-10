@@ -71,8 +71,9 @@ class MulticastSocket(socket.socket):
 
             # deduplicate messages
             if message.message_id in self.dedupe:
-                print("Received duplicate message")
                 continue
+            else:
+                self.dedupe.append(message.message_id)
 
             self.received.put(message)
             #print(f"Received: {message}")
@@ -80,10 +81,8 @@ class MulticastSocket(socket.socket):
     
     def __deliver(self) -> None:
         """
-        This function will be used to implement FIFO and/or causal ordering.
-        Not yet implemented.
+        This function can be used to implement FIFO and/or causal ordering.
         """
-        # TODO implement FIFO and causal ordering
         while True:
             message: Message = self.received.get()
             self.delivered.put(message)
@@ -99,8 +98,8 @@ class MulticastSocket(socket.socket):
         Assume unreliable channels but sensible network configuration (every node
         can be reached from any other node, but packages can be dropped at any time). 
         Assume synchronous communication (upper bounds for message transition times).
-        Aim for at most once semantics through deduplication. No explicit acknowledgements
-        for multicast messages.
+        Aim for at most once semantics through deduplication. Acknowledgements are 
+        handled case by case on the application layer.
         """
         message: Message = Message(message_type, content, self.ip, self.port, uuid.uuid4())
         self.sendto(str(message).encode("utf-8"), (self.group_ip, self.group_port))
