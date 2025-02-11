@@ -1238,15 +1238,26 @@ class Server:
 
 # used for dummy testing
 if __name__ == "__main__":
-    # Usage: python server.py <port>
+    # Usage: python server.py <port> [<uuid>]
     #myserver: Server = Server(5384)
-    if len(sys.argv) != 2:
-        print("Usage: python client.py <port>")
+    if len(sys.argv) == 2:
+        try:
+            port = int(sys.argv[1])
+            myserver: Server = Server(port)
+        except ValueError:
+            print("Error: Port must be an integer.")
+            sys.exit(1)
+    elif len(sys.argv) == 3:
+        try:
+            port = int(sys.argv[1])
+            set_uuid = int(sys.argv[2])
+            myserver: Server = Server(port, set_uuid)
+        except ValueError:
+            print("Error: Port and uuid must be integers.")
+            sys.exit(1)
+    else:
+        print("Usage: python server.py <port> [<uuid>]")
         sys.exit(1)
-    try:
-        port = int(sys.argv[1])
-    except ValueError:
-        print("Error: Port must be an integer.")
-        sys.exit(1)
+    
 
-    myserver: Server = Server(port)
+    

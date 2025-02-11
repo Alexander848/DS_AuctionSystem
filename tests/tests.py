@@ -86,9 +86,9 @@ if __name__ == "__main__":
 
 
 # server:
-# python -c "import server; server.Server(5001, set_uuid=1)"
-# python -c "import server; server.Server(5002, set_uuid=2)"
-# python -c "import server; server.Server(5003, set_uuid=3)"
+# python server.py 5001 1
+# python server.py 5002 2
+# python server.py 5003 3
 
 # client:
 #python client.py 6001
