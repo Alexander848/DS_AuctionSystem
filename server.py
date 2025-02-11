@@ -6,6 +6,7 @@ import time
 from enum import Enum
 from threading import Thread
 import threading
+import sys
 
 from middleware import Message
 from middleware import MessageType
@@ -1237,4 +1238,15 @@ class Server:
 
 # used for dummy testing
 if __name__ == "__main__":
-    myserver: Server = Server(5384)
+    # Usage: python server.py <port>
+    #myserver: Server = Server(5384)
+    if len(sys.argv) != 2:
+        print("Usage: python client.py <port>")
+        sys.exit(1)
+    try:
+        port = int(sys.argv[1])
+    except ValueError:
+        print("Error: Port must be an integer.")
+        sys.exit(1)
+
+    myserver: Server = Server(port)
