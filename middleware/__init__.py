@@ -17,6 +17,7 @@ class MessageType(Enum):
     ELECTION_START = "ELECTION_START"   # starts an election. election message.
     ELECTION_ACK = "ELECTION_ACK"       # acknowledges. ok/alive message.
     DECLARE_INM = "DECLARE_INM"         # declares the sender to be the INM. coordination message.
+    DECLARE_INM_ACK = "DECLARE_INM_ACK" # acknowledges the DECLARE_INM message.
     INM_ANSWER = "INM_ANSWER"           # INM response to get INM address
     LIST_ITEMS_REQUEST = "LIST_ITEMS_REQUEST"
     LIST_ITEMS_RESPONSE = "LIST_ITEMS_RESPONSE"
@@ -42,6 +43,7 @@ class MessageType(Enum):
     HEARTBEAT_RESPONSE = "HEARTBEAT_RESPONSE"
     REMOVE_NODE = "REMOVE_NODE"
     GROUPVIEW_UPDATE = "GROUPVIEW_UPDATE"  # New message type for groupview updates
+    GROUPVIEW_ACK = "GROUPVIEW_ACK"        # ack for groupview multicast
     REPLICATE_STATE_REQUEST = "REPLICATE_STATE_REQUEST"
     UNICAST_ACK = "UNICAST_ACK"         # ack for unicast message
 

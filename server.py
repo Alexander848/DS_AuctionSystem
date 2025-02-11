@@ -217,7 +217,7 @@ class Server:
         Server.Node entries.
         """
         print(f"  [server.py] [Server.dynamic_discovery]")
-        self.idle_grp_sock.send(MessageType.UUID_QUERY, str(self.uuid))     # dynamic discovery, acknowledged by UUID_ANSWER
+        self.idle_grp_sock.send(MessageType.UUID_QUERY, str(self.uuid))     # dynamic discovery, acks are implied by UUID_ANSWER
         print(f"  [server.py] [Server.dynamic_discovery] Collecting UUID_QUERY...")
         time.sleep(1.0) # collect responses for 1 second
         responses: list[Message] = list(self.unicast_soc.delivered.queue)
@@ -260,10 +260,25 @@ class Server:
         print(f"  [server.py] [Server.declare_inm] declaring itself inm")
 
         self.state = Server.State.INM
-        self.idle_grp_sock.send(MessageType.DECLARE_INM, str(self.uuid))
+
+        # handle reliable multicast through acks and retransmissions
+        # -> doesnt need deduplication because the messages are idempotent
+        self.waiting_on_inm_ack: list[uuid.UUID] = [node.uuid for node in self.groupview]
+        inm_ack_thread: Thread = Thread(target=self.inm_ack, name="INMAckThread")
+        inm_ack_thread.start()
+        
+        self.idle_grp_sock.send(MessageType.DECLARE_INM, str(self.uuid))    # ack handled right above
 
         # Election is finished (this node is INM)
         self.election_in_progress = False
+
+    def inm_ack(self) -> None:
+        time.sleep(1)
+        unacked_nodes: list[Server.Node] = [node for node in self.groupview if node.uuid in self.waiting_on_inm_ack]
+        for node in unacked_nodes:
+            print(f"###  [server.py] [Server.inm_ack] UNACKED Sending DECLARE_INM to unacknowledged node {node}")
+            self.unicast_soc.send(MessageType.DECLARE_INM, str(self.uuid), node.ip, node.port)
+
 
     def message_parser(self, listen_sock: UnicastSocket | MulticastSocket) -> NoReturn | None:
         """
@@ -328,6 +343,9 @@ class Server:
             elif msg.message_type == MessageType.DECLARE_INM:
                 print(f"    [server.py] [Server.message_parser] Received DECLARE_INM from {msg.src_ip}:{msg.src_port}")
 
+                # acknowledge the declare_inm
+                self.unicast_soc.send(MessageType.DECLARE_INM_ACK, str(self.uuid), msg.src_ip, msg.src_port)
+
                 # Skip election if currently active in an auction
                 if self.state in [Server.State.AAN, Server.State.PAN]:
                     # still update INM TODO: test scenario: auction active, INM fails, INM reassigned, PAN/AAN fails -> need current INM_address for PAN/AAN request
@@ -342,6 +360,11 @@ class Server:
                 # Update the INM node information
                 self.inm = Server.Node(msg.src_ip, msg.src_port, uuid.UUID(msg.content))
                 print(f"    [server.py] [Server.message_parser] New INM is set to {self.inm}")
+
+            elif msg.message_type == MessageType.DECLARE_INM_ACK:
+                print(f"    [server.py] [Server.message_parser] Received DECLARE_INM_ACK from {msg.src_ip}:{msg.src_port}")
+                if uuid.UUID(msg.content) in self.waiting_on_inm_ack:
+                    self.waiting_on_inm_ack.remove(uuid.UUID(msg.content))
 
             elif msg.message_type == MessageType.TEST:
                 print(f"    [server.py] [Server.message_parser] Received TEST from {msg.src_ip}:{msg.src_port}")
@@ -597,8 +620,10 @@ class Server:
                     self.aan_node.last_heartbeat = time.time()
 
             elif msg.message_type == MessageType.GROUPVIEW_UPDATE:
-                print(
-                    f"    [server.py] [Server.message_parser] Received GROUPVIEW_UPDATE from {msg.src_ip}:{msg.src_port}")
+                print(f"    [server.py] [Server.message_parser] Received GROUPVIEW_UPDATE from {msg.src_ip}:{msg.src_port}")
+
+                # acknowledge the groupview
+                self.unicast_soc.send(MessageType.GROUPVIEW_ACK, str(self.uuid), msg.src_ip, msg.src_port)
 
                 # If this server is IDLE, update its groupview
                 if self.state == Server.State.IDLE:
@@ -610,6 +635,12 @@ class Server:
                         new_groupview.add(Server.Node(ip, int(port), uuid.UUID(uuid_str)))
                     self.groupview = new_groupview
                     print(f"    [server.py] [Server.message_parser] Updated groupview: {self.groupview}")
+
+            elif msg.message_type == MessageType.GROUPVIEW_ACK:
+                print(f"    [server.py] [Server.message_parser] Received GROUPVIEW_ACK from {msg.src_ip}:{msg.src_port}")
+                #print(f"{msg=}")
+                #print(f"{self.waiting_on_groupview_ack=}")
+                self.waiting_on_groupview_ack.remove(uuid.UUID(msg.content))
 
             else:
                 print(f"     [server.py] [Server.message_parser] ERROR: Unknown message: {msg}, {type(listen_sock)}")
@@ -1182,9 +1213,26 @@ class Server:
         if self.state == Server.State.INM:
             # Construct the groupview string: "ip:port:uuid;ip:port:uuid;..."
             groupview_str = ";".join([f"{node.ip}:{node.port}:{node.uuid}" for node in self.groupview])
+
+            # handle reliable multicast through acks and retransmissions
+            # -> doesnt need deduplication because the messages are idempotent
+            self.waiting_on_groupview_ack: list[uuid.UUID] = [node.uuid for node in self.groupview]
+            groupview_ack_thread: Thread = Thread(target=self.groupview_ack, args=(groupview_str,), name="GroupviewAckThread")
+            groupview_ack_thread.start()
+
             print(f"  [server.py] [Server.send_groupview_update] Sending groupview update: {groupview_str}")
             # Send the groupview update to all nodes via multicast
-            self.idle_grp_sock.send(MessageType.GROUPVIEW_UPDATE, groupview_str)
+            self.idle_grp_sock.send(MessageType.GROUPVIEW_UPDATE, groupview_str)    # ack handled right above
+
+    def groupview_ack(self, groupview_str: str) -> None:
+        time.sleep(1)
+        unacked_nodes: list[Server.Node] = [node for node in self.groupview if node.uuid in self.waiting_on_groupview_ack]
+        for node in unacked_nodes:
+            print(f"  [server.py] [Server.groupview_ack] Sending GROUPVIEW_UPDATE to unacknowledged node {node}")
+            self.unicast_soc.send(MessageType.GROUPVIEW_UPDATE, groupview_str, node.ip, node.port)
+
+
+
 
 # used for dummy testing
 if __name__ == "__main__":
