@@ -640,7 +640,8 @@ class Server:
                 print(f"    [server.py] [Server.message_parser] Received GROUPVIEW_ACK from {msg.src_ip}:{msg.src_port}")
                 #print(f"{msg=}")
                 #print(f"{self.waiting_on_groupview_ack=}")
-                self.waiting_on_groupview_ack.remove(uuid.UUID(msg.content))
+                if uuid.UUID(msg.content) in self.waiting_on_groupview_ack:
+                    self.waiting_on_groupview_ack.remove(uuid.UUID(msg.content))
 
             else:
                 print(f"     [server.py] [Server.message_parser] ERROR: Unknown message: {msg}, {type(listen_sock)}")

@@ -1,9 +1,9 @@
 
-from urllib import response
+from typing import Callable
 import uuid
-import threading
-import select
 import sys
+import time
+from threading import Thread
 from middleware import MessageType
 from middleware import Message
 from middleware.unicast import UnicastSocket
@@ -29,7 +29,7 @@ class Client:
         #self.inm_address: tuple[str, int] = ("", -1)  # (IP, port) of the INM
         # self.inm_unicast_soc: UnicastSocket = None  # Socket for persistent INM connection 
         
-        self.listener_thread: threading.Thread = threading.Thread(target=self.listen_for_messages)
+        self.listener_thread: Thread = Thread(target=self.listen_for_messages)
         self.listener_thread.daemon = True  
         self.listener_thread.start()
         
@@ -75,7 +75,6 @@ class Client:
                     if len(command_parts) == 2:
                         item_id = command_parts[1]
                         self.join_auction(item_id)
-                        
                     else:
                         print("Invalid join command. Usage: join <item_id>")
                     break
@@ -114,6 +113,7 @@ class Client:
             response: Message = self.unicast_soc.delivered.get()
             print(f"parsing {response}")
             if response.message_type == MessageType.LIST_ITEMS_RESPONSE:
+                self.waiting_on_list_ack = False
                 # Parse the string back into a list of dictionaries
                 items_list = []
                 items_str = response.content
@@ -140,6 +140,7 @@ class Client:
             
             # Received when starting auction or when AAN changes
             elif response.message_type == MessageType.START_AUCTION_RESPONSE:
+                self.waiting_on_start_auction_ack = False
                 if response.content.startswith("ERROR"):
                     print(f"Failed to start auction: {response.content}")
                 else:
@@ -148,6 +149,7 @@ class Client:
                     print(f"Auction is ongoing. AAN address: {aan_ip}:{aan_port}")
             
             elif response.message_type == MessageType.JOIN_AUCTION_RESPONSE:
+                self.waiting_on_join_auction_ack = False
                 if response.content == "failed":
                     print(f"Failed to join auction")
                 else:
@@ -228,33 +230,50 @@ class Client:
 
         print("                    =======================\n")
 
-    def list_items(self):
+    def multicast_retries(self, waiting: Callable[[], bool], message_type: MessageType, message_content: str, retries: int = 3) -> None:
+        """
+        Sends a multicast message with retries to make it reliable. Deduplication is handled in the middleware.
+        """
+        while waiting() and retries > 0:
+            print(f"multicasting {message_type} message")
+            self.multicast_soc.send(message_type, message_content)
+            time.sleep(1)
+            retries -= 1
+            if retries == 0:
+                print(f"No response for {message_type}")
+
+    def list_items(self) -> None:
         """
         Sends a LIST_ITEMS_REQUEST message to discover available auction items.
         This message is broadcast to all servers using the multicast socket.
         """
-        self.multicast_soc.send(MessageType.LIST_ITEMS_REQUEST, str(self.uuid))
-        print("Sent LIST_ITEMS_REQUEST to INM")
+        # acknowlegement handling
 
-    def start_auction(self, item_id: str = ""):
+        self.waiting_on_list_ack: bool = True
+        multicast_thread: Thread = Thread(target=self.multicast_retries, args=(lambda: self.waiting_on_list_ack, MessageType.LIST_ITEMS_REQUEST, str(self.uuid)))
+        multicast_thread.start()
+
+    def start_auction(self, item_id: str = "") -> None:
         """
         Sends a START_AUCTION_REQUEST message to initiate an auction for the specified item.
         This message is broadcast to all servers using the multicast socket.
         
         :param item_id: The ID of the item to start the auction for.
         """
-        self.multicast_soc.send(MessageType.START_AUCTION_REQUEST, item_id)
-        print(f"Sent START_AUCTION_REQUEST for item {item_id} to INM")
-
-    def join_auction(self, item_id: str):
+        self.waiting_on_start_auction_ack: bool = True
+        multicast_thread: Thread = Thread(target=self.multicast_retries, args=(lambda: self.waiting_on_start_auction_ack, MessageType.START_AUCTION_REQUEST, str(item_id)))
+        multicast_thread.start()
+        
+    def join_auction(self, item_id: str) -> None:
         """
         Sends a JOIN_AUCTION_REQUEST message to participate
         in an auction for the specified item.
         This message is broadcast to all servers using the multicast socket.
         """
         message_content = f"{item_id},{self.uuid}"
-        self.multicast_soc.send(MessageType.JOIN_AUCTION_REQUEST, message_content) 
-        print(f"Sent JOIN_AUCTION_REQUEST for item {item_id}")
+        self.waiting_on_join_auction_ack: bool = True
+        multicast_thread: Thread = Thread(target=self.multicast_retries, args=(lambda: self.waiting_on_join_auction_ack, MessageType.JOIN_AUCTION_REQUEST, message_content))
+        multicast_thread.start()
 
     def place_bid(self, item_id: str, bid_amount: int):
         """
