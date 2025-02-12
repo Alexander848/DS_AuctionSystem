@@ -87,10 +87,13 @@ class MulticastSocket(socket.socket):
         """
         while True:
             message: Message = self.received.get()
-            self.delivered.put(message)
             #print(f"Delivered: {message}")
             if self.stop_execution:
+                self.delivered.queue.clear()
+                self.received.queue.clear()
                 return
+
+            self.delivered.put(message)
 
 
     # overrides parents method
