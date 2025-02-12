@@ -62,12 +62,14 @@ class MulticastSocket(socket.socket):
             message: Message = Message(MessageType(data[0]), data[1], data[2], int(data[3]), uuid.UUID(data[4]))
 
             # stops receive and deliver thread
-            if message.message_type is MessageType.TEST_STOP_EXECUTION:
+            if message.message_type is MessageType.STOP_EXECUTION:
                 message_content = data[1].split(",")
                 if message_content[0] == str(self.ip) and message_content[1] == str(self.port):
                     self.stop_execution = True
                     self.received.put(message)
                     return
+                else:
+                    continue
 
             # deduplicate messages
             if message.message_id in self.dedupe:

@@ -61,7 +61,7 @@ class UnicastSocket(socket.socket):
             message: Message = Message(MessageType(data[0]), data[1], data[2], int(data[3]), uuid.UUID(data[4]))
 
             # stops receive and deliver thread
-            if message.message_type is MessageType.TEST_STOP_EXECUTION:
+            if message.message_type is MessageType.STOP_EXECUTION:
                 self.stop_execution = True
                 self.received.put(message)
                 return
@@ -96,6 +96,7 @@ class UnicastSocket(socket.socket):
                 self.received.queue.clear()
                 self.delivered.queue.clear()
                 return
+
             self.delivered.put(message)
             #print(f"Delivered: {message}")
 

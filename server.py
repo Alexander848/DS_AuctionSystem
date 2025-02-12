@@ -202,8 +202,8 @@ class Server:
             # and message parser thread
             if self.stop_execution:
                 self.stop_heartbeat_thread()
-                self.unicast_soc.send(MessageType.TEST_STOP_EXECUTION, "test", self.ip, self.port)
-                self.idle_grp_sock.send(MessageType.TEST_STOP_EXECUTION, str(self.ip) + "," + str(self.port))   # no ack because this is for testing purposes only
+                self.unicast_soc.send(MessageType.STOP_EXECUTION, "test", self.ip, self.port)
+                self.idle_grp_sock.send(MessageType.STOP_EXECUTION, str(self.ip) + "," + str(self.port))   # no ack because this is for testing purposes only
                 return
 
 
@@ -291,9 +291,9 @@ class Server:
             msg: Message = listen_sock.delivered.get()
             #print(f"parsing {msg}")
 
-            # stops messageParser Thread and uni/multicast deliver/receive threads
+            # receiving a STOP_EXECUTION message stops messageParser Thread and uni/multicast deliver/receive threads
             if self.stop_execution is True:
-                if msg.message_type is not MessageType.TEST_STOP_EXECUTION:
+                if msg.message_type is not MessageType.STOP_EXECUTION:
                     continue
                 else:
                     return

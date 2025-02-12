@@ -93,6 +93,8 @@ class Client:
                     break
                 # Handle the 'exit' command - terminate the application.
                 elif action == "exit":
+                    self.unicast_soc.send(MessageType.STOP_EXECUTION, "stop", self.ip, self.port)
+                    self.multicast_soc.send(MessageType.STOP_EXECUTION, str(self.ip) + "," + str(self.port))
                     print("Exiting client...")
                     exit()
                 else:
@@ -112,6 +114,7 @@ class Client:
             # Listen on self.unicast_soc
             response: Message = self.unicast_soc.delivered.get()
             print(f"parsing {response}")
+
             if response.message_type == MessageType.LIST_ITEMS_RESPONSE:
                 self.waiting_on_list_ack = False
                 # Parse the string back into a list of dictionaries
