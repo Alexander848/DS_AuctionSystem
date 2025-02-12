@@ -63,7 +63,6 @@ class Server:
             {"itemID": 3, "itemname": "Hookshot", "price": 300},
             {"itemID": 4, "itemname": "Boomerang", "price": 200},
         ]
-        # we need to make sure the port is unique for each IP address. TODO: how?
         self.port: int = port
         self.ip: str = get_my_ip()
         # sets custom uuid, else generates a new UUID every time
@@ -349,7 +348,6 @@ class Server:
 
                 # Skip election if currently active in an auction
                 if self.state in [Server.State.AAN, Server.State.PAN]:
-                    # still update INM TODO: test scenario: auction active, INM fails, INM reassigned, PAN/AAN fails -> need current INM_address for PAN/AAN request
                     self.inm = Server.Node(msg.src_ip, msg.src_port, uuid.UUID(msg.content))
                     print("    [server.py] [Server.message_parser] Skipping DECLARE_INM, currently in active auction role.")
                     continue
@@ -398,7 +396,7 @@ class Server:
 
                 # If this server is the INM, query the external API for available items
                 if self.state == Server.State.INM:
-                    available_items = self.get_available_items_from_api()  # TODO Implement this
+                    available_items = self.get_available_items_from_api()
                     # Format the item list as a string
                     items_str = ""
                     for item in available_items:
@@ -961,9 +959,10 @@ class Server:
         print(f"  [server.py] [Server.finalize_auction] Finalizing auction for item {self.item_id}")
 
         # 1. Inform Clients 
-        for client_ip, client_port, client_uuid in self.clients:
-            message = f"{self.item_id},{self.highest_bid},{self.highest_bidder if self.highest_bidder else 'None'},{'Winner' if self.highest_bidder == client_uuid else 'Loser'}"
-            self.unicast_soc.send(MessageType.AUCTION_END, message, client_ip, client_port)
+        if self.state == Server.State.AAN:
+            for client_ip, client_port, client_uuid in self.clients:
+                message = f"{self.item_id},{self.highest_bid},{self.highest_bidder if self.highest_bidder else 'None'},{'Winner' if self.highest_bidder == client_uuid else 'Loser'}"
+                self.unicast_soc.send(MessageType.AUCTION_END, message, client_ip, client_port)
 
         # 2. Inform PAN
         if self.pan_node:
@@ -1085,7 +1084,6 @@ class Server:
             except Exception as e:
                 print(f"Heartbeat send failed: {e}")
 
-            # TODO: could be buggy, test further?
             # If this node has the highest UUID in the groupview, start an election
             if self.groupview:
                 highest_uuid = max(node.uuid for node in self.groupview)

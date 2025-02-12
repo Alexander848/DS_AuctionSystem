@@ -100,7 +100,6 @@ class Client:
                 else:
                     print("Invalid command.")
 
-    # removed connect_to_inm TODO: ADD CONNECT TO INM AND USE UNICAST?
 
     def listen_for_messages(self):
         """
@@ -197,6 +196,7 @@ class Client:
             elif response.message_type == MessageType.AUCTION_END:
                 print(f"Auction end response: {response.content}")
                 item_id, highest_bid, highest_bidder, result = response.content.split(",")
+                print(f"#---------------------------#")
                 print(f"Auction for item {item_id} has ended.")
                 print(f"  Highest Bid: {highest_bid}")
                 print(f"  Highest Bidder: {highest_bidder}")
@@ -208,6 +208,8 @@ class Client:
             
             else:
                 print(f"Received unknown or invalid message: {response}")
+            
+            print("> ", end="", flush=True)
 
     def display_client_info(self) -> None:
         """Displays the client's current information."""
@@ -292,7 +294,7 @@ class Client:
 
 if __name__ == "__main__":
     # Usage: python client.py <port>
-    #myclient: Client = Client(5384)
+    # myclient: Client = Client(5384)
     if len(sys.argv) != 2:
         print("Usage: python client.py <port>")
         sys.exit(1)
