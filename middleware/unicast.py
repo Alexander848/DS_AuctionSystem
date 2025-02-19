@@ -139,7 +139,7 @@ class UnicastSocket(socket.socket):
 
 
     def close(self) -> None:
-        message: Message = Message(MessageType.TEST_STOP_EXECUTION, "", self.ip, self.port, uuid.uuid4())
+        message: Message = Message(MessageType.STOP_EXECUTION, "", self.ip, self.port, uuid.uuid4())
         self.sendto(str(message).encode("utf-8"), (self.ip, self.port))
         self.thread_receive.join()
         self.thread_deliver.join()
